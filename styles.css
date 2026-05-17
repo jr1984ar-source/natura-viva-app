@@ -39,7 +39,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 
 .nav-tabs { display: flex; background: var(--green-dark); border-bottom: 1px solid rgba(255,255,255,.15); padding: 0 6px; overflow-x: auto; flex-shrink: 0; -webkit-overflow-scrolling: touch; }
 .nav-tabs::-webkit-scrollbar { display: none; }
-.nav-tab { padding: 9px 11px; font-size: 11px; color: rgba(255,255,255,.6); cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; flex-shrink: 0; transition: color .15s; }
+.nav-tab { padding: 10px 14px; font-size: 12px; color: rgba(255,255,255,.6); cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; flex-shrink: 0; transition: color .15s; }
 .nav-tab.active { color: #fff; border-bottom-color: var(--green-light); font-weight: 500; }
 
 .content { padding: 12px; flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
@@ -66,7 +66,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 /* ===== SEMANA ===== */
 .week-nav-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .week-title { font-size: 13px; font-weight: 500; }
-.reminder { background: #fff8e8; color: #7a4a10; border: 1px solid #e8c870; border-radius: var(--radius-md); padding: 7px 11px; font-size: 11px; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+.reminder { background: #fff8e8; color: #7a4a10; border: 1px solid #e8c870; border-radius: var(--radius-md); padding: 7px 11px; font-size: 11px; margin-bottom: 8px; }
 .cal-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .cal-grid { display: grid; grid-template-columns: 38px repeat(7, minmax(0, 1fr)); gap: 2px; min-width: 480px; }
 .chdr { background: var(--green-dark); color: #fff; text-align: center; padding: 5px 2px; border-radius: var(--radius-sm); line-height: 1.4; }
@@ -108,12 +108,20 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .modal-check { width: 16px; height: 16px; border: 1.5px solid #5a8a50; border-radius: var(--radius-sm); flex-shrink: 0; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 10px; margin-top: 1px; }
 .modal-check.done { background: var(--green-dark); border-color: var(--green-dark); color: #fff; }
 .del-btn { background: none; border: none; cursor: pointer; color: #b03030; font-size: 16px; padding: 0 4px; line-height: 1; flex-shrink: 0; }
-.modal-box textarea { width: 100%; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 8px 10px; font-size: 12px; resize: vertical; min-height: 70px; max-height: 160px; font-family: inherit; color: var(--text-primary); background: var(--bg-secondary); margin-bottom: 10px; line-height: 1.5; }
+.modal-box textarea, .modal-box input { width: 100%; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 8px 10px; font-size: 13px; font-family: inherit; color: var(--text-primary); background: var(--bg-secondary); margin-bottom: 10px; line-height: 1.5; }
+.modal-box textarea { resize: vertical; min-height: 70px; max-height: 160px; }
 .modal-btns { display: flex; gap: 6px; justify-content: flex-end; }
 .btn-cancel { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 6px 12px; font-size: 12px; cursor: pointer; color: var(--text-secondary); }
 .btn-ok { background: var(--green-dark); color: #fff; border: none; border-radius: var(--radius-md); padding: 6px 14px; font-size: 12px; cursor: pointer; }
 
-/* ===== COMBUSTIBLE ===== */
+/* Botones rápidos horas extras */
+.quick-hours { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 10px; }
+.q-hr-btn { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 5px 10px; font-size: 11px; cursor: pointer; color: var(--text-primary); }
+.q-hr-btn.plus { color: var(--green); border-color: #b8d8b0; }
+.q-hr-btn.minus { color: #b03030; border-color: #e8c0c0; }
+.q-hr-btn.zero { color: var(--text-secondary); }
+
+/* ===== COMBUSTIBLE (ahora dentro de equipo) ===== */
 .fuel-month-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .fuel-month-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
 .fuel-day-hdr { text-align: center; font-size: 9px; font-weight: 500; color: var(--text-secondary); padding: 3px 0; }
@@ -155,6 +163,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .sel-toggle { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 20px; padding: 4px 10px; font-size: 11px; cursor: pointer; color: var(--text-secondary); margin-left: auto; }
 .sel-toggle.on { background: #3a7020; color: #fff; border-color: #3a7020; }
 
+/* MODO BÚSQUEDA EN TAREAS (lista, finca, persona) */
+.mode-row { display: flex; gap: 5px; margin-bottom: 10px; background: var(--bg-secondary); border-radius: var(--radius-md); padding: 3px; }
+.mode-btn { flex: 1; text-align: center; padding: 6px 8px; font-size: 11px; border-radius: 5px; cursor: pointer; color: var(--text-secondary); }
+.mode-btn.active { background: var(--bg-primary); color: var(--text-primary); font-weight: 500; border: 1px solid var(--border-soft); }
+.group-card { background: var(--bg-primary); border: 1px solid var(--border-soft); border-radius: var(--radius-md); padding: 9px 11px; margin-bottom: 5px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+.group-card:hover { background: var(--bg-secondary); }
+
 /* ===== DETALLE CASA ===== */
 .hv-back { display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--text-secondary); font-size: 12px; margin-bottom: 10px; }
 .hv-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding: 10px 12px; background: var(--bg-primary); border: 1px solid var(--border-soft); border-radius: var(--radius-lg); }
@@ -176,7 +191,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .task-item { background: var(--bg-primary); border: 1px solid var(--border-soft); border-radius: var(--radius-md); padding: 9px 11px; margin-bottom: 5px; display: flex; align-items: flex-start; gap: 8px; }
 
 /* ===== EQUIPO ===== */
-.emp-card { background: var(--bg-primary); border: 1px solid var(--border-soft); border-radius: var(--radius-lg); padding: 10px 12px; margin-bottom: 6px; display: flex; align-items: center; gap: 10px; }
+.emp-card { background: var(--bg-primary); border: 1px solid var(--border-soft); border-radius: var(--radius-lg); padding: 10px 12px; margin-bottom: 6px; display: flex; align-items: center; gap: 10px; cursor: pointer; transition: background .12s; }
+.emp-card:hover { background: var(--bg-secondary); }
 .emp-av { width: 36px; height: 36px; border-radius: 50%; background: #d0e8c8; display: flex; align-items: center; justify-content: center; font-weight: 500; font-size: 12px; color: var(--green-dark); flex-shrink: 0; }
 .emp-name { font-size: 13px; font-weight: 500; }
 .emp-zone { font-size: 11px; color: var(--text-secondary); }
@@ -184,8 +200,54 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .dot-on { background: #3a9820; }
 .dot-off { background: var(--border); }
 .notif-b { background: #FCEBEB; color: #A32D2D; font-size: 10px; font-weight: 500; padding: 2px 7px; border-radius: 20px; }
-.pending-row { background: var(--bg-primary); border: 1px solid var(--border-soft); border-radius: var(--radius-md); padding: 8px 11px; margin-bottom: 5px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
-.sec-lbl { font-size: 10px; font-weight: 500; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; margin-top: 12px; }
+.sec-lbl { font-size: 10px; font-weight: 500; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; margin-top: 14px; display: flex; align-items: center; gap: 6px; }
+
+/* ===== DETALLE EMPLEADO ===== */
+.empd-header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; padding: 12px 14px; background: var(--bg-primary); border: 1px solid var(--border-soft); border-radius: var(--radius-lg); }
+.empd-av { width: 48px; height: 48px; border-radius: 50%; background: #d0e8c8; display: flex; align-items: center; justify-content: center; font-weight: 500; font-size: 16px; color: var(--green-dark); flex-shrink: 0; }
+.empd-name { font-size: 16px; font-weight: 500; }
+.empd-zone { font-size: 11px; color: var(--text-secondary); }
+.empd-tabs { display: flex; gap: 2px; margin-bottom: 12px; background: var(--bg-secondary); border-radius: var(--radius-md); padding: 3px; }
+.empd-tab { flex: 1; text-align: center; padding: 8px; font-size: 12px; border-radius: 6px; cursor: pointer; color: var(--text-secondary); }
+.empd-tab.active { background: var(--bg-primary); color: var(--text-primary); font-weight: 500; border: 1px solid var(--border-soft); }
+
+/* CALENDARIO DE HORAS DEL EMPLEADO (MES) */
+.hr-month-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.hr-view-toggle { display: flex; gap: 3px; background: var(--bg-secondary); border-radius: var(--radius-md); padding: 3px; margin-bottom: 10px; }
+.hr-view-btn { flex: 1; text-align: center; padding: 6px; font-size: 11px; border-radius: 5px; cursor: pointer; color: var(--text-secondary); }
+.hr-view-btn.active { background: var(--bg-primary); color: var(--text-primary); font-weight: 500; border: 1px solid var(--border-soft); }
+.hr-month-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.hr-day-cell { background: var(--bg-primary); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); min-height: 50px; padding: 3px; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; transition: background .1s; }
+.hr-day-cell:hover { background: var(--bg-secondary); }
+.hr-day-cell.weekend { background: #f4f8f1; }
+.hr-day-cell.other { opacity: .25; pointer-events: none; }
+.hr-day-num { font-size: 10px; font-weight: 500; color: var(--text-secondary); }
+.hr-day-val { font-size: 12px; font-weight: 700; margin-top: 2px; }
+.hr-day-val.plus { color: var(--green); }
+.hr-day-val.minus { color: #b03030; }
+
+/* CALENDARIO HORAS SEMANAL */
+.hr-week-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; margin-top: 8px; }
+.hr-week-day { background: var(--bg-primary); border: 1px solid var(--border-soft); border-radius: var(--radius-md); padding: 8px 4px; cursor: pointer; text-align: center; min-height: 64px; display: flex; flex-direction: column; justify-content: space-between; }
+.hr-week-day.weekend { background: #f4f8f1; }
+.hr-week-day.today { border-color: var(--green); border-width: 1.5px; }
+.hr-wd-label { font-size: 10px; color: var(--text-secondary); font-weight: 500; }
+.hr-wd-date { font-size: 9px; color: var(--text-tertiary); margin-top: 2px; }
+.hr-wd-val { font-size: 14px; font-weight: 700; margin-top: 4px; }
+.hr-wd-val.plus { color: var(--green); }
+.hr-wd-val.minus { color: #b03030; }
+.hr-wd-empty { font-size: 16px; color: var(--text-tertiary); margin-top: 4px; }
+
+/* RESUMEN DE HORAS */
+.hr-summary { background: var(--bg-primary); border: 1px solid var(--border-soft); border-radius: var(--radius-lg); padding: 12px 14px; margin-top: 12px; }
+.hr-sum-title { font-size: 11px; font-weight: 500; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; }
+.hr-sum-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; font-size: 13px; }
+.hr-sum-row.total { border-top: 1px solid var(--border-soft); margin-top: 6px; padding-top: 9px; font-weight: 700; font-size: 15px; }
+.hr-sum-val.plus { color: var(--green); }
+.hr-sum-val.minus { color: #b03030; }
+
+/* PENDIENTE DEL EMPLEADO */
+.no-task { font-size: 12px; color: var(--text-tertiary); padding: 12px 0; text-align: center; }
 
 .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--green-dark); color: #fff; padding: 8px 16px; border-radius: var(--radius-md); font-size: 12px; opacity: 0; transition: opacity .3s; z-index: 300; pointer-events: none; white-space: nowrap; }
 .toast.show { opacity: 1; }

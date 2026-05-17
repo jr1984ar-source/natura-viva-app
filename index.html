@@ -35,27 +35,25 @@
   <div class="nav-tabs" id="nav-tabs">
     <div class="nav-tab active" data-tab="mes">📅 Mes</div>
     <div class="nav-tab" data-tab="semana">🗓️ Semana</div>
-    <div class="nav-tab" data-tab="combustible">⛽ Combustible</div>
     <div class="nav-tab" data-tab="equipo">👥 Equipo</div>
     <div class="nav-tab" data-tab="tareas">✓ Tareas</div>
   </div>
   <div class="content">
     <div id="view-mes"></div>
     <div id="view-semana" style="display:none"></div>
-    <div id="view-combustible" style="display:none"></div>
     <div id="view-equipo" style="display:none"></div>
     <div id="view-tareas" style="display:none"></div>
     <div id="view-casa" style="display:none"></div>
+    <div id="view-empleado" style="display:none"></div>
   </div>
 </div>
 <div class="toast" id="toast"></div>
 <script src="app.js"></script>
 <script>
-  // Registrar service worker para que funcione sin internet
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('sw.js').then(
-        () => console.log('Service Worker registrado'),
+        () => console.log('SW registrado'),
         err => console.log('SW falló:', err)
       );
     });

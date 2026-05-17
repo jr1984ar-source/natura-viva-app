@@ -1,7 +1,12 @@
-/* ===== Natura Viva Gardens — lógica de la app ===== */
+/* ===== Natura Viva Gardens — lógica de la app v2 ===== */
 
 const FINCAS = ['Tonyna','Tagomago','Seahouse','Greco','Batle Bujosa','Cabrera','Sa Vinya','Can Borras',"Puig de s'Espart",'Miró','Gerret','Alzina'];
-const EMPLEADOS = ['Jose R.','Alejo','Cristian'];
+const EMPLEADOS = [
+  {init:'JR', name:'Jose R.', zones:'Lunes, Jueves', active:true},
+  {init:'AL', name:'Alejo', zones:'Martes, Miércoles', active:true},
+  {init:'CR', name:'Cristian', zones:'Viernes', active:false}
+];
+const EMP_NAMES = EMPLEADOS.map(e => e.name);
 const FCLS = {Tonyna:'c-tonyna',Tagomago:'c-tagomago',Seahouse:'c-seahouse',Greco:'c-greco','Batle Bujosa':'c-batle',Cabrera:'c-cabrera','Sa Vinya':'c-savinya','Can Borras':'c-borras',"Puig de s'Espart":'c-puig','Miró':'c-miro',Gerret:'c-gerret',Alzina:'c-alzina'};
 const FCOL = {Tonyna:'#ffc5c5',Tagomago:'#e8b4d8',Seahouse:'#b8d0f0',Greco:'#f5d9b0','Batle Bujosa':'#b8d8f0',Cabrera:'#c8c870','Sa Vinya':'#90d0b8','Can Borras':'#a8e0a8',"Puig de s'Espart":'#e0c898','Miró':'#c8b0e0',Gerret:'#ffd098',Alzina:'#c8e0a8'};
 const DKEYS = ['lunes','martes','miercoles','jueves','viernes','sabado','domingo'];
@@ -20,7 +25,7 @@ const BASE = {
   domingo: [null,null,null,null,null,null,null,null]
 };
 
-// ===== ESTADO (con persistencia en localStorage) =====
+// ===== ESTADO + PERSISTENCIA =====
 function loadState() {
   try {
     const s = JSON.parse(localStorage.getItem('nv_state') || '{}');
@@ -28,10 +33,11 @@ function loadState() {
       fuelDays: s.fuelDays || {},
       wkndTasks: s.wkndTasks || {},
       houseData: s.houseData || initHouseData(),
+      empHours: s.empHours || initEmpHours(),
       nextId: s.nextId || 100
     };
   } catch(e) {
-    return { fuelDays: {}, wkndTasks: {}, houseData: initHouseData(), nextId: 100 };
+    return { fuelDays: {}, wkndTasks: {}, houseData: initHouseData(), empHours: initEmpHours(), nextId: 100 };
   }
 }
 function initHouseData() {
@@ -45,9 +51,15 @@ function initHouseData() {
   hd['Tonyna'].tareas = [{id:3,title:'Abonar seto trasero',prio:'normal',done:true,assigns:['Cristian']}];
   return hd;
 }
+function initEmpHours() {
+  // empHours[empName][dateKey] = '+6' o '-3' (string firmado)
+  const eh = {};
+  EMP_NAMES.forEach(n => eh[n] = {});
+  return eh;
+}
 function saveState() {
   try {
-    localStorage.setItem('nv_state', JSON.stringify({ fuelDays, wkndTasks, houseData, nextId }));
+    localStorage.setItem('nv_state', JSON.stringify({ fuelDays, wkndTasks, houseData, empHours, nextId }));
   } catch(e) { console.log('No se pudo guardar:', e); }
 }
 
@@ -55,15 +67,21 @@ const _s = loadState();
 let fuelDays = _s.fuelDays;
 let wkndTasks = _s.wkndTasks;
 let houseData = _s.houseData;
+let empHours = _s.empHours;
 let nextId = _s.nextId;
+// asegurar que existen las claves
+EMP_NAMES.forEach(n => { if (!empHours[n]) empHours[n] = {}; });
 
 let weekOff = 0, monthOff = 0, fuelMonthOff = 0;
 let currentHouse = null, currentTab = 'notas';
+let currentEmp = null, empTab = 'tareas', empCalView = 'mes', empMonthOff = 0, empWeekOff = 0;
 let taskFilter = 'all', selectMode = false;
 let selectedTasks = new Set();
 let newTaskAssigns = new Set();
 let newTaskAssignsHouse = new Set();
 let modalKey = '', modalLabel = '';
+let hoursModalKey = '', hoursModalEmp = '', hoursModalLabel = '';
+let tareasMode = 'lista'; // 'lista' | 'finca' | 'persona'
 const wkBase = new Date(2026, 4, 11);
 
 // ===== UTILIDADES =====
@@ -79,6 +97,26 @@ function refreshCals() {
   if (document.getElementById('view-semana').style.display !== 'none') buildWeek();
 }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function laborableDays(year, month) {
+  // mes 0-indexed. Cuenta lunes-viernes
+  let n = 0;
+  const dim = new Date(year, month + 1, 0).getDate();
+  for (let d = 1; d <= dim; d++) {
+    const dow = new Date(year, month, d).getDay();
+    if (dow !== 0 && dow !== 6) n++;
+  }
+  return n;
+}
+function netHoursForMonth(empName, year, month) {
+  let net = 0;
+  const dim = new Date(year, month + 1, 0).getDate();
+  for (let d = 1; d <= dim; d++) {
+    const k = dk(new Date(year, month, d));
+    const v = empHours[empName] && empHours[empName][k];
+    if (v) net += parseInt(v, 10) || 0;
+  }
+  return net;
+}
 
 // ===== MODAL FIN DE SEMANA =====
 function openWkndModal(key, label) {
@@ -121,6 +159,66 @@ function addWkndTask() {
 }
 function toggleWknd(key, idx) { wkndTasks[key][idx].done = !wkndTasks[key][idx].done; saveState(); openWkndModal(key, modalLabel); refreshCals(); }
 function removeWknd(key, idx) { wkndTasks[key].splice(idx, 1); saveState(); openWkndModal(key, modalLabel); refreshCals(); }
+
+// ===== MODAL HORAS EXTRAS DE EMPLEADO =====
+function openHoursModal(empName, key, label) {
+  hoursModalEmp = empName; hoursModalKey = key; hoursModalLabel = label;
+  const old = document.getElementById('hours-modal');
+  if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.className = 'modal-overlay';
+  ov.id = 'hours-modal';
+  const current = (empHours[empName] && empHours[empName][key]) || '';
+  ov.innerHTML = `<div class="modal-box">
+    <div class="modal-title">⏱ ${escapeHtml(empName)} · ${escapeHtml(label)}</div>
+    <div style="font-size:11px;color:var(--text-secondary);margin-bottom:8px">Horas extras (+) o menos (–) sobre la jornada normal de 8 h.</div>
+    <div class="quick-hours">
+      <button class="q-hr-btn plus" onclick="setHr('+2')">+2</button>
+      <button class="q-hr-btn plus" onclick="setHr('+4')">+4</button>
+      <button class="q-hr-btn plus" onclick="setHr('+6')">+6</button>
+      <button class="q-hr-btn plus" onclick="setHr('+8')">+8</button>
+    </div>
+    <div class="quick-hours">
+      <button class="q-hr-btn minus" onclick="setHr('-2')">−2</button>
+      <button class="q-hr-btn minus" onclick="setHr('-4')">−4</button>
+      <button class="q-hr-btn minus" onclick="setHr('-6')">−6</button>
+      <button class="q-hr-btn minus" onclick="setHr('-8')">−8</button>
+      <button class="q-hr-btn zero" onclick="setHr('')">Borrar</button>
+    </div>
+    <input id="hr-in" placeholder="O escribe (ej: +3, -5)" value="${escapeHtml(current)}">
+    <div class="modal-btns">
+      <div class="btn-cancel" onclick="closeHoursModal()">Cancelar</div>
+      <div class="btn-ok" onclick="saveHours()">Guardar</div>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.onclick = e => { if (e.target === ov) closeHoursModal(); };
+  setTimeout(() => { const inp = document.getElementById('hr-in'); if (inp) inp.focus(); }, 40);
+}
+function closeHoursModal() { const m = document.getElementById('hours-modal'); if (m) m.remove(); }
+function setHr(v) { const inp = document.getElementById('hr-in'); if (inp) inp.value = v; }
+function saveHours() {
+  let v = document.getElementById('hr-in').value.trim();
+  if (v === '') {
+    if (empHours[hoursModalEmp]) delete empHours[hoursModalEmp][hoursModalKey];
+  } else {
+    // normalizar a +N o -N
+    const m = v.match(/^([+-]?)(\d+)/);
+    if (!m) { showToast('Escribe un número (ej. +4 o -3)'); return; }
+    const sign = m[1] === '-' ? '-' : '+';
+    const num = parseInt(m[2], 10);
+    if (num === 0) {
+      if (empHours[hoursModalEmp]) delete empHours[hoursModalEmp][hoursModalKey];
+    } else {
+      if (!empHours[hoursModalEmp]) empHours[hoursModalEmp] = {};
+      empHours[hoursModalEmp][hoursModalKey] = sign + num;
+    }
+  }
+  saveState();
+  closeHoursModal();
+  renderEmpleado();
+  showToast('✅ Guardado');
+}
 
 // ===== MES =====
 function buildMonth() {
@@ -181,7 +279,7 @@ function buildWeek() {
   const s = dates[0], e = dates[6];
   const title = s.getMonth() === e.getMonth() ? `${s.getDate()}–${e.getDate()} ${MS[e.getMonth()]} ${s.getFullYear()}` : `${s.getDate()} ${MS[s.getMonth()]} – ${e.getDate()} ${MS[e.getMonth()]}`;
   const wn = Math.floor((dates[4] - new Date(2026, 0, 2)) / (7 * 86400000));
-  if (wn % 2 === 0) { const r = document.createElement('div'); r.className = 'reminder'; r.innerHTML = `🔧 <span><strong>Este viernes:</strong> limpiar herramientas y furgoneta</span>`; vv.appendChild(r); }
+  if (wn % 2 === 0) { const r = document.createElement('div'); r.className = 'reminder'; r.innerHTML = `🔧 <strong>Este viernes:</strong> limpiar herramientas y furgoneta`; vv.appendChild(r); }
   const wnr = document.createElement('div'); wnr.className = 'week-nav-row';
   wnr.innerHTML = `<div style="display:flex;align-items:center;gap:7px"><button class="mnav-btn" onclick="weekOff--;buildWeek()">‹</button><div class="week-title">Semana ${title}</div><button class="mnav-btn" onclick="weekOff++;buildWeek()">›</button></div>`;
   vv.appendChild(wnr);
@@ -223,59 +321,214 @@ function buildWeek() {
   wrap.appendChild(grid); vv.appendChild(wrap);
 }
 
-// ===== COMBUSTIBLE =====
-function buildFuel() {
-  const vv = document.getElementById('view-combustible'); vv.innerHTML = '';
+// ===== EQUIPO (con Combustible dentro) =====
+function buildEquipo() {
+  const vv = document.getElementById('view-equipo'); vv.innerHTML = '';
+  // Sección 1: trabajadores clicables
+  const lbl1 = document.createElement('div'); lbl1.className = 'sec-lbl'; lbl1.textContent = '👥 Trabajadores'; lbl1.style.marginTop = '0';
+  vv.appendChild(lbl1);
+  EMPLEADOS.forEach(e => {
+    let p = 0; FINCAS.forEach(f => { houseData[f].tareas.forEach(t => { if (!t.done && (t.assigns || []).includes(e.name)) p++; }); });
+    const el = document.createElement('div'); el.className = 'emp-card';
+    el.innerHTML = `<div class="emp-av">${e.init}</div><div style="flex:1"><div class="emp-name">${escapeHtml(e.name)}</div><div class="emp-zone">${escapeHtml(e.zones)}</div></div>${p?`<span class="notif-b">${p} tarea${p>1?'s':''}</span>`:''}<div class="emp-dot ${e.active?'dot-on':'dot-off'}"></div>`;
+    el.onclick = () => openEmpleado(e.name);
+    vv.appendChild(el);
+  });
+
+  // Sección 2: combustible (dentro de equipo, después de trabajadores)
+  const lbl2 = document.createElement('div'); lbl2.className = 'sec-lbl'; lbl2.textContent = '⛽ Combustible';
+  vv.appendChild(lbl2);
+
+  const fuelBox = document.createElement('div');
+  fuelBox.style.cssText = 'background:var(--bg-primary);border:1px solid var(--border-soft);border-radius:var(--radius-lg);padding:11px';
+  vv.appendChild(fuelBox);
+
   const now = new Date(new Date().getFullYear(), new Date().getMonth() + fuelMonthOff, 1);
-  const hdr = document.createElement('div'); hdr.className = 'fuel-month-nav';
-  hdr.innerHTML = `<button class="mnav-btn" onclick="fuelMonthOff--;buildFuel()">‹</button><div style="font-size:13px;font-weight:500">⛽ ${MONTHS[now.getMonth()]} ${now.getFullYear()}</div><button class="mnav-btn" onclick="fuelMonthOff++;buildFuel()">›</button>`;
-  vv.appendChild(hdr);
-  const grid = document.createElement('div'); grid.className = 'fuel-month-grid';
-  ['Lu','Ma','Mi','Ju','Vi','Sá','Do'].forEach(d => { const h = document.createElement('div'); h.className = 'fuel-day-hdr'; h.textContent = d; grid.appendChild(h); });
+  const fhdr = document.createElement('div'); fhdr.className = 'fuel-month-nav';
+  fhdr.innerHTML = `<button class="mnav-btn" onclick="fuelMonthOff--;buildEquipo()">‹</button><div style="font-size:12px;font-weight:500">${MONTHS[now.getMonth()]} ${now.getFullYear()}</div><button class="mnav-btn" onclick="fuelMonthOff++;buildEquipo()">›</button>`;
+  fuelBox.appendChild(fhdr);
+  const fgrid = document.createElement('div'); fgrid.className = 'fuel-month-grid';
+  ['Lu','Ma','Mi','Ju','Vi','Sá','Do'].forEach(d => { const h = document.createElement('div'); h.className = 'fuel-day-hdr'; h.textContent = d; fgrid.appendChild(h); });
   const first = new Date(now.getFullYear(), now.getMonth(), 1);
   const startDow = (first.getDay() + 6) % 7;
   const dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  for (let i = 0; i < startDow; i++) { const d = document.createElement('div'); d.className = 'fuel-day-cell other'; grid.appendChild(d); }
+  for (let i = 0; i < startDow; i++) { const d = document.createElement('div'); d.className = 'fuel-day-cell other'; fgrid.appendChild(d); }
   let fueled = 0;
   for (let day = 1; day <= dim; day++) {
     const date = new Date(now.getFullYear(), now.getMonth(), day);
     const key = dk(date); const isFueled = !!fuelDays[key]; if (isFueled) fueled++;
     const cell = document.createElement('div'); cell.className = 'fuel-day-cell' + (isFueled ? ' fueled' : '');
-    cell.innerHTML = `<div class="fuel-day-num">${day}</div>${isFueled ? '<div style="font-size:14px">⛽</div>' : ''}`;
-    cell.onclick = () => { fuelDays[key] = !fuelDays[key]; saveState(); buildFuel(); if (fuelDays[key]) showToast('⛽ Repostaje registrado'); };
-    grid.appendChild(cell);
+    cell.innerHTML = `<div class="fuel-day-num">${day}</div>${isFueled ? '<div style="font-size:13px">⛽</div>' : ''}`;
+    cell.onclick = () => { fuelDays[key] = !fuelDays[key]; saveState(); buildEquipo(); if (fuelDays[key]) showToast('⛽ Repostaje registrado'); };
+    fgrid.appendChild(cell);
   }
   const total = startDow + dim; const rem = total % 7 === 0 ? 0 : 7 - (total % 7);
-  for (let i = 0; i < rem; i++) { const d = document.createElement('div'); d.className = 'fuel-day-cell other'; grid.appendChild(d); }
-  vv.appendChild(grid);
-  const sum = document.createElement('div'); sum.className = 'fuel-summary';
+  for (let i = 0; i < rem; i++) { const d = document.createElement('div'); d.className = 'fuel-day-cell other'; fgrid.appendChild(d); }
+  fuelBox.appendChild(fgrid);
+  const sum = document.createElement('div'); sum.style.cssText = 'font-size:11px;color:var(--text-secondary);margin-top:8px';
   sum.innerHTML = `⛽ Este mes: <strong>${fueled} repostaje${fueled !== 1 ? 's' : ''}</strong>`;
+  fuelBox.appendChild(sum);
+}
+
+// ===== DETALLE EMPLEADO =====
+function openEmpleado(name) {
+  currentEmp = name; empTab = 'tareas'; empMonthOff = 0; empWeekOff = 0; empCalView = 'mes';
+  ['mes','semana','equipo','tareas'].forEach(v => document.getElementById('view-'+v).style.display = 'none');
+  document.getElementById('view-casa').style.display = 'none';
+  document.getElementById('nav-tabs').style.display = 'none';
+  document.getElementById('view-empleado').style.display = 'block';
+  renderEmpleado();
+}
+function renderEmpleado() {
+  const vv = document.getElementById('view-empleado'); vv.innerHTML = '';
+  const emp = EMPLEADOS.find(e => e.name === currentEmp);
+  if (!emp) { switchMain('equipo'); return; }
+  // Botón volver
+  const back = document.createElement('div'); back.className = 'hv-back'; back.innerHTML = `‹ Volver`;
+  back.onclick = () => { document.getElementById('view-empleado').style.display = 'none'; document.getElementById('nav-tabs').style.display = 'flex'; document.getElementById('view-equipo').style.display = 'block'; buildEquipo(); };
+  vv.appendChild(back);
+  // Header del empleado
+  let pending = 0;
+  FINCAS.forEach(f => { houseData[f].tareas.forEach(t => { if (!t.done && (t.assigns || []).includes(emp.name)) pending++; }); });
+  const hdr = document.createElement('div'); hdr.className = 'empd-header';
+  hdr.innerHTML = `<div class="empd-av">${emp.init}</div><div style="flex:1"><div class="empd-name">${escapeHtml(emp.name)}</div><div class="empd-zone">${escapeHtml(emp.zones)}</div></div><div class="emp-dot ${emp.active?'dot-on':'dot-off'}"></div>`;
+  vv.appendChild(hdr);
+  // Sub-tabs: Tareas / Horas
+  const tabs = document.createElement('div'); tabs.className = 'empd-tabs';
+  [{k:'tareas',label:'✓ Tareas pendientes'},{k:'horas',label:'⏱ Horas'}].forEach(({k,label}) => {
+    const tab = document.createElement('div'); tab.className = 'empd-tab' + (empTab===k?' active':'');
+    const cnt = k==='tareas' ? pending : 0;
+    tab.innerHTML = `${label}${cnt?` <span style="background:#FCEBEB;color:#A32D2D;font-size:9px;padding:1px 5px;border-radius:20px;margin-left:3px">${cnt}</span>`:''}`;
+    tab.onclick = () => { empTab = k; renderEmpleado(); };
+    tabs.appendChild(tab);
+  });
+  vv.appendChild(tabs);
+  if (empTab === 'tareas') renderEmpTareas(vv, emp.name);
+  else renderEmpHoras(vv, emp.name);
+}
+function renderEmpTareas(vv, empName) {
+  let any = false;
+  FINCAS.forEach(f => {
+    houseData[f].tareas.forEach(t => {
+      if (t.done) return;
+      if (!(t.assigns || []).includes(empName)) return;
+      any = true;
+      const el = document.createElement('div'); el.className = 'task-global-item';
+      el.innerHTML = `<div class="tcheck" onclick="toggleEmpT('${f}',${t.id})"></div><div class="tinfo"><div class="ttitle">${escapeHtml(t.title)}</div><div class="tmeta"><span style="display:flex;align-items:center;gap:2px"><div style="width:7px;height:7px;border-radius:2px;background:${FCOL[f]}"></div>${escapeHtml(f)}</span>${(t.assigns||[]).length>1?`<span>👥 con ${(t.assigns||[]).filter(a=>a!==empName).join(', ')}</span>`:''}</div></div><span class="tbadge ${t.prio==='urgent'?'b-u':'b-n'}">${t.prio==='urgent'?'Urgente':'Normal'}</span>`;
+      vv.appendChild(el);
+    });
+  });
+  if (!any) { const el = document.createElement('div'); el.className = 'no-task'; el.textContent = '✓ Sin tareas pendientes'; vv.appendChild(el); }
+}
+function toggleEmpT(f, id) { const t = houseData[f].tareas.find(x => x.id === id); if (t) { t.done = !t.done; saveState(); renderEmpleado(); } }
+
+function renderEmpHoras(vv, empName) {
+  // Toggle mes/semana
+  const tog = document.createElement('div'); tog.className = 'hr-view-toggle';
+  [{k:'mes',l:'📅 Mes'},{k:'semana',l:'🗓️ Semana'}].forEach(({k,l}) => {
+    const b = document.createElement('div'); b.className = 'hr-view-btn' + (empCalView===k?' active':'');
+    b.textContent = l;
+    b.onclick = () => { empCalView = k; renderEmpleado(); };
+    tog.appendChild(b);
+  });
+  vv.appendChild(tog);
+
+  if (empCalView === 'mes') renderEmpHorasMes(vv, empName);
+  else renderEmpHorasSemana(vv, empName);
+
+  // RESUMEN
+  const now = empCalView === 'mes' ? new Date(new Date().getFullYear(), new Date().getMonth() + empMonthOff, 1) : (function(){ const d = new Date(wkBase); d.setDate(d.getDate() + empWeekOff*7 + 3); return d; })();
+  const Y = now.getFullYear(), M = now.getMonth();
+  const labDays = laborableDays(Y, M);
+  const baseHrs = labDays * 8;
+  const net = netHoursForMonth(empName, Y, M);
+  const total = baseHrs + net;
+  const sum = document.createElement('div'); sum.className = 'hr-summary';
+  sum.innerHTML = `<div class="hr-sum-title">Resumen ${MONTHS[M]} ${Y}</div>
+    <div class="hr-sum-row"><span>Días laborables (L–V)</span><span>${labDays} días</span></div>
+    <div class="hr-sum-row"><span>Jornada base</span><span>${labDays} × 8 h = ${baseHrs} h</span></div>
+    <div class="hr-sum-row"><span>Ajuste extras / menos</span><span class="hr-sum-val ${net>0?'plus':(net<0?'minus':'')}">${net>0?'+':''}${net} h</span></div>
+    <div class="hr-sum-row total"><span>Total del mes</span><span>${total} h</span></div>`;
   vv.appendChild(sum);
 }
 
-// ===== EQUIPO =====
-function buildEquipo() {
-  const vv = document.getElementById('view-equipo'); vv.innerHTML = '';
-  [{init:'JR',name:'Jose R.',zones:'Lunes, Jueves',active:true},{init:'AL',name:'Alejo',zones:'Martes, Miércoles',active:true},{init:'CR',name:'Cristian',zones:'Viernes',active:false}].forEach(e => {
-    let p = 0; FINCAS.forEach(f => { houseData[f].tareas.forEach(t => { if (!t.done && (t.assigns || []).includes(e.name)) p++; }); });
-    const el = document.createElement('div'); el.className = 'emp-card';
-    el.innerHTML = `<div class="emp-av">${e.init}</div><div style="flex:1"><div class="emp-name">${e.name}</div><div class="emp-zone">${e.zones}</div></div>${p?`<span class="notif-b">${p} tarea${p>1?'s':''}</span>`:''}<div class="emp-dot ${e.active?'dot-on':'dot-off'}"></div>`;
-    vv.appendChild(el);
+function renderEmpHorasMes(vv, empName) {
+  const now = new Date(new Date().getFullYear(), new Date().getMonth() + empMonthOff, 1);
+  const hdr = document.createElement('div'); hdr.className = 'hr-month-nav';
+  hdr.innerHTML = `<button class="mnav-btn" onclick="empMonthOff--;renderEmpleado()">‹</button><div style="font-size:13px;font-weight:500">${MONTHS[now.getMonth()]} ${now.getFullYear()}</div><button class="mnav-btn" onclick="empMonthOff++;renderEmpleado()">›</button>`;
+  vv.appendChild(hdr);
+  const grid = document.createElement('div'); grid.className = 'hr-month-grid';
+  ['Lu','Ma','Mi','Ju','Vi','Sá','Do'].forEach(d => { const h = document.createElement('div'); h.className = 'fuel-day-hdr'; h.textContent = d; grid.appendChild(h); });
+  const first = new Date(now.getFullYear(), now.getMonth(), 1);
+  const startDow = (first.getDay() + 6) % 7;
+  const dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  for (let i = 0; i < startDow; i++) { const d = document.createElement('div'); d.className = 'hr-day-cell other'; grid.appendChild(d); }
+  for (let day = 1; day <= dim; day++) {
+    const date = new Date(now.getFullYear(), now.getMonth(), day);
+    const dow = (date.getDay() + 6) % 7;
+    const weekend = dow >= 5;
+    const key = dk(date);
+    const val = (empHours[empName] && empHours[empName][key]) || '';
+    const cell = document.createElement('div'); cell.className = 'hr-day-cell' + (weekend ? ' weekend' : '');
+    let valHtml = '';
+    if (val) {
+      const isPlus = val.startsWith('+');
+      valHtml = `<div class="hr-day-val ${isPlus?'plus':'minus'}">${val}</div>`;
+    }
+    cell.innerHTML = `<div class="hr-day-num">${day}</div>${valHtml}`;
+    cell.onclick = () => openHoursModal(empName, key, `${DLABELS[dow]} ${day} ${MS[date.getMonth()]}`);
+    grid.appendChild(cell);
+  }
+  const total = startDow + dim; const rem = total % 7 === 0 ? 0 : 7 - (total % 7);
+  for (let i = 0; i < rem; i++) { const d = document.createElement('div'); d.className = 'hr-day-cell other'; grid.appendChild(d); }
+  vv.appendChild(grid);
+}
+function renderEmpHorasSemana(vv, empName) {
+  const dates = getWeekDates(empWeekOff);
+  const s = dates[0], e = dates[6];
+  const title = s.getMonth() === e.getMonth() ? `${s.getDate()}–${e.getDate()} ${MS[e.getMonth()]}` : `${s.getDate()} ${MS[s.getMonth()]} – ${e.getDate()} ${MS[e.getMonth()]}`;
+  const hdr = document.createElement('div'); hdr.className = 'hr-month-nav';
+  hdr.innerHTML = `<button class="mnav-btn" onclick="empWeekOff--;renderEmpleado()">‹</button><div style="font-size:13px;font-weight:500">Semana ${title}</div><button class="mnav-btn" onclick="empWeekOff++;renderEmpleado()">›</button>`;
+  vv.appendChild(hdr);
+  const grid = document.createElement('div'); grid.className = 'hr-week-grid';
+  dates.forEach((d, i) => {
+    const weekend = i >= 5;
+    const key = dk(d);
+    const val = (empHours[empName] && empHours[empName][key]) || '';
+    const cell = document.createElement('div'); cell.className = 'hr-week-day' + (weekend ? ' weekend' : '') + (isToday(d) ? ' today' : '');
+    let valHtml = '';
+    if (val) {
+      const isPlus = val.startsWith('+');
+      valHtml = `<div class="hr-wd-val ${isPlus?'plus':'minus'}">${val}</div>`;
+    } else {
+      valHtml = `<div class="hr-wd-empty">+</div>`;
+    }
+    cell.innerHTML = `<div><div class="hr-wd-label">${DLABELS[i].slice(0,3)}</div><div class="hr-wd-date">${d.getDate()}/${d.getMonth()+1}</div></div>${valHtml}`;
+    cell.onclick = () => openHoursModal(empName, key, `${DLABELS[i]} ${d.getDate()} ${MS[d.getMonth()]}`);
+    grid.appendChild(cell);
   });
-  const lbl = document.createElement('div'); lbl.className = 'sec-lbl'; lbl.textContent = 'Pendientes por finca'; vv.appendChild(lbl);
-  let any = false;
-  FINCAS.forEach(f => {
-    const p = houseData[f].tareas.filter(t => !t.done); if (!p.length) return; any = true;
-    const el = document.createElement('div'); el.className = 'pending-row';
-    el.innerHTML = `<div style="width:8px;height:8px;border-radius:2px;background:${FCOL[f]};flex-shrink:0"></div><div style="font-size:12px;font-weight:500;flex:1">${escapeHtml(f)}</div><span class="notif-b">${p.length}</span>`;
-    el.onclick = () => openHouse(f); vv.appendChild(el);
-  });
-  if (!any) { const el = document.createElement('div'); el.style.cssText = 'font-size:12px;color:var(--text-tertiary);padding:6px 0'; el.textContent = 'Sin tareas pendientes.'; vv.appendChild(el); }
+  vv.appendChild(grid);
 }
 
-// ===== TAREAS =====
+// ===== TAREAS (con 3 modos: lista, por finca, por persona) =====
 function buildTareas() {
   const vv = document.getElementById('view-tareas'); vv.innerHTML = '';
+  // Selector de modo de búsqueda
+  const mr = document.createElement('div'); mr.className = 'mode-row';
+  [{k:'lista',l:'📋 Lista'},{k:'finca',l:'🏠 Por finca'},{k:'persona',l:'👤 Por persona'}].forEach(({k,l}) => {
+    const b = document.createElement('div'); b.className = 'mode-btn' + (tareasMode===k?' active':'');
+    b.textContent = l;
+    b.onclick = () => { tareasMode = k; buildTareas(); };
+    mr.appendChild(b);
+  });
+  vv.appendChild(mr);
+
+  if (tareasMode === 'finca') return buildTareasPorFinca(vv);
+  if (tareasMode === 'persona') return buildTareasPorPersona(vv);
+  buildTareasLista(vv);
+}
+
+function buildTareasLista(vv) {
   if (selectMode && selectedTasks.size > 0) {
     const bar = document.createElement('div'); bar.className = 'bulk-bar';
     bar.innerHTML = `<span><strong>${selectedTasks.size}</strong> seleccionada${selectedTasks.size>1?'s':''}</span><button class="bulk-btn" onclick="bulkDone()">✓ Marcar hechas</button><button class="bulk-btn" onclick="bulkDelete()">✕ Eliminar</button><button class="bulk-btn" style="margin-left:auto" onclick="selectMode=false;selectedTasks.clear();buildTareas()">Cancelar</button>`;
@@ -308,15 +561,50 @@ function buildTareas() {
     });
   });
   if (!any) { const el = document.createElement('div'); el.style.cssText = 'font-size:12px;color:var(--text-tertiary);padding:8px 0'; el.textContent = 'Sin tareas en esta vista.'; vv.appendChild(el); }
+  // Añadir nueva
   const box = document.createElement('div'); box.className = 'add-task-box';
   box.innerHTML = `<div style="font-size:10px;font-weight:500;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.5px;margin-bottom:7px">Nueva tarea</div><input id="gt-title" placeholder="Descripción..."><div class="assign-row"><span class="assign-label">Asignar a:</span><div class="emp-pills" id="gt-pills"></div></div><div class="add-task-row"><select id="gt-finca"><option value="">— Finca —</option>${FINCAS.map(f=>`<option>${f}</option>`).join('')}</select><select id="gt-prio"><option value="normal">Normal</option><option value="urgent">Urgente</option></select><button class="btn-send" onclick="addGlobalTask()">Enviar →</button></div>`;
   vv.appendChild(box);
   renderEmpPills('gt-pills', newTaskAssigns);
 }
 
+function buildTareasPorFinca(vv) {
+  // Listado clicable de fincas con # pendientes
+  let any = false;
+  FINCAS.forEach(f => {
+    const p = houseData[f].tareas.filter(t => !t.done);
+    const all = houseData[f].tareas.length;
+    if (!all) return;
+    any = true;
+    const el = document.createElement('div'); el.className = 'group-card';
+    el.innerHTML = `<div style="width:10px;height:36px;border-radius:3px;background:${FCOL[f]};flex-shrink:0"></div><div style="flex:1"><div style="font-size:13px;font-weight:500">${escapeHtml(f)}</div><div style="font-size:10px;color:var(--text-tertiary)">${all} tarea${all!==1?'s':''} totales</div></div>${p.length?`<span class="notif-b">${p.length} pendiente${p.length>1?'s':''}</span>`:'<span style="font-size:10px;color:var(--text-tertiary)">✓ todo hecho</span>'}`;
+    el.onclick = () => openHouse(f);
+    vv.appendChild(el);
+  });
+  if (!any) { const el = document.createElement('div'); el.style.cssText='font-size:12px;color:var(--text-tertiary);padding:12px 0;text-align:center'; el.textContent = 'No hay tareas todavía.'; vv.appendChild(el); }
+}
+
+function buildTareasPorPersona(vv) {
+  EMPLEADOS.forEach(e => {
+    let pending = 0, done = 0;
+    FINCAS.forEach(f => {
+      houseData[f].tareas.forEach(t => {
+        if ((t.assigns || []).includes(e.name)) {
+          if (t.done) done++; else pending++;
+        }
+      });
+    });
+    if (pending === 0 && done === 0) return;
+    const el = document.createElement('div'); el.className = 'group-card';
+    el.innerHTML = `<div class="emp-av" style="width:32px;height:32px;font-size:11px">${e.init}</div><div style="flex:1"><div style="font-size:13px;font-weight:500">${escapeHtml(e.name)}</div><div style="font-size:10px;color:var(--text-tertiary)">${done} hecha${done!==1?'s':''}</div></div>${pending?`<span class="notif-b">${pending} pendiente${pending>1?'s':''}</span>`:'<span style="font-size:10px;color:var(--text-tertiary)">✓ al día</span>'}`;
+    el.onclick = () => openEmpleado(e.name);
+    vv.appendChild(el);
+  });
+}
+
 function renderEmpPills(containerId, setRef) {
   const c = document.getElementById(containerId); if (!c) return; c.innerHTML = '';
-  EMPLEADOS.forEach(name => {
+  EMP_NAMES.forEach(name => {
     const isOn = setRef.has(name);
     const p = document.createElement('div'); p.className = 'emp-pill' + (isOn?' on':'');
     p.innerHTML = `${isOn?'✓ ':''}${name}`;
@@ -345,7 +633,8 @@ function addGlobalTask() {
 // ===== DETALLE CASA =====
 function openHouse(finca) {
   currentHouse = finca; currentTab = 'notas';
-  ['mes','semana','combustible','equipo','tareas'].forEach(v => document.getElementById('view-'+v).style.display = 'none');
+  ['mes','semana','equipo','tareas'].forEach(v => document.getElementById('view-'+v).style.display = 'none');
+  document.getElementById('view-empleado').style.display = 'none';
   document.getElementById('nav-tabs').style.display = 'none';
   document.getElementById('view-casa').style.display = 'block';
   renderHouse();
@@ -355,7 +644,7 @@ function renderHouse() {
   const f = currentHouse; const col = FCOL[f] || '#ccc';
   const back = document.createElement('div'); back.className = 'hv-back';
   back.innerHTML = `‹ Volver`;
-  back.onclick = () => { document.getElementById('nav-tabs').style.display = 'flex'; document.getElementById('view-casa').style.display = 'none'; document.getElementById('view-semana').style.display = 'block'; buildWeek(); };
+  back.onclick = () => { document.getElementById('view-casa').style.display = 'none'; document.getElementById('nav-tabs').style.display = 'flex'; switchMain('semana'); };
   vv.appendChild(back);
   let slots = '';
   DKEYS.forEach((day, di) => { const hrs = []; BASE[day].forEach((s, hi) => { if (s === f) hrs.push(hi); }); if (hrs.length) { const t = `${HOURS[hrs[0]]}–${hrs[hrs.length-1]<7?HOURS[hrs[hrs.length-1]+1]:'16:00'}`; slots += `${DLABELS[di]} ${t}  `; } });
@@ -423,19 +712,19 @@ function addTarea(f) {
 }
 
 // ===== NAVEGACIÓN =====
-const TABS = ['mes','semana','combustible','equipo','tareas'];
+const TABS = ['mes','semana','equipo','tareas'];
 function switchMain(tab) {
   TABS.forEach((t, i) => {
     document.getElementById('view-' + t).style.display = 'none';
     document.querySelectorAll('.nav-tab')[i].classList.remove('active');
   });
   document.getElementById('view-casa').style.display = 'none';
+  document.getElementById('view-empleado').style.display = 'none';
   document.getElementById('nav-tabs').style.display = 'flex';
   document.getElementById('view-' + tab).style.display = 'block';
   document.querySelectorAll('.nav-tab')[TABS.indexOf(tab)].classList.add('active');
   if (tab === 'mes') buildMonth();
   if (tab === 'semana') buildWeek();
-  if (tab === 'combustible') buildFuel();
   if (tab === 'equipo') buildEquipo();
   if (tab === 'tareas') buildTareas();
 }
