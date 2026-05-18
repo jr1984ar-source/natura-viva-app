@@ -133,7 +133,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
 const FINCAS = ['Tonyna','Tagomago','Seahouse','Greco','Batle Bujosa','Cabrera','Sa Vinya','Can Borras',"Puig de s'Espart",'Miró','Gerret','Alzina'];
 const EMPLEADOS = [
-  {init:'AL', name:'Alejo', zones:'Martes, Miércoles', active:true},
+  {init:'JR', name:'JRAR',     zones:'Admin / Todos los días', active:true},
+  {init:'AL', name:'Alejo',    zones:'Martes, Miércoles', active:true},
   {init:'CR', name:'Cristian', zones:'Viernes', active:true}
 ];
 const EMP_NAMES = EMPLEADOS.map(e => e.name);
