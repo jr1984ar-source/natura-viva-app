@@ -43,14 +43,9 @@ function loadState() {
   }
 }
 function initHouseData() {
+  // App vacía — lista para usar
   const hd = {};
   FINCAS.forEach(f => { hd[f] = { notas: [], tareas: [] }; });
-  hd['Tagomago'].tareas = [
-    {id:1,title:'Revisar sistema de riego',prio:'urgent',done:false,assigns:['Jose R.','Alejo']},
-    {id:2,title:'Podar palmera entrada',prio:'normal',done:false,assigns:['Alejo']}
-  ];
-  hd['Can Borras'].notas = [{id:101,text:'El perro está suelto\nEntrar con cuidado.',date:'12 may',img:null}];
-  hd['Tonyna'].tareas = [{id:3,title:'Abonar seto trasero',prio:'normal',done:true,assigns:['Cristian']}];
   return hd;
 }
 function initEmpHours() {
@@ -146,12 +141,24 @@ function openWkndModal(key, label) {
       <div class="modal-item-text${t.done?' done-item':''}" onclick="editWkndTask('${key}',${i})">${escapeHtml(t.text)}</div>
       <button class="edit-btn" onclick="editWkndTask('${key}',${i})">✎</button>
       <button class="del-btn" onclick="removeWknd('${key}',${i})">×</button>
-    </div>`).join('') : '<div style="font-size:11px;color:var(--text-tertiary);margin-bottom:6px">Sin tareas todavía.</div>';
+    </div>`).join('') : '<div style="font-size:11px;color:var(--text-tertiary);margin-bottom:6px">Sin entradas todavía.</div>';
   ov.innerHTML = `<div class="modal-box">
     <div class="modal-title">📅 ${escapeHtml(label)}</div>
     <div class="modal-list">${listHtml}</div>
     <div class="field-label">Nueva entrada</div>
     <textarea id="wknd-in" placeholder="Escribe tarea, nota, trabajo... (puede ocupar varias líneas)"></textarea>
+    <div class="field-label">¿Cuándo?</div>
+    <div class="emp-pills" style="margin-bottom:10px">
+      <div class="emp-pill on" id="wknd-scope-day" onclick="setWkndScope('day')">🌞 Todo el día</div>
+      <div class="emp-pill" id="wknd-scope-hour" onclick="setWkndScope('hour')">⏰ Hora concreta</div>
+    </div>
+    <div id="wknd-hour-section" style="display:none;margin-bottom:10px">
+      <div style="display:flex;gap:6px;align-items:center">
+        <select id="wknd-hour-from" style="flex:1">${HOURS.map((h,i)=>`<option value="${i}">${h}</option>`).join('')}</select>
+        <span style="font-size:12px;color:var(--text-secondary)">a</span>
+        <select id="wknd-hour-to" style="flex:1">${HOURS.map((h,i)=>`<option value="${i+1}" ${i===0?'selected':''}>${i<7?HOURS[i+1]:'16:00'}</option>`).join('')}<option value="8">16:00</option></select>
+      </div>
+    </div>
     <div class="modal-btns">
       <div class="btn-cancel" onclick="closeWkndModal()">Cerrar</div>
       <div class="btn-ok" onclick="addWkndTask()">Añadir</div>
@@ -159,14 +166,33 @@ function openWkndModal(key, label) {
   </div>`;
   document.body.appendChild(ov);
   ov.onclick = e => { if (e.target === ov) closeWkndModal(); };
+  wkndScope = 'day';
   setTimeout(() => { const ta = document.getElementById('wknd-in'); if (ta) ta.focus(); }, 40);
+}
+let wkndScope = 'day';
+function setWkndScope(scope) {
+  wkndScope = scope;
+  document.getElementById('wknd-scope-day').classList.toggle('on', scope === 'day');
+  document.getElementById('wknd-scope-hour').classList.toggle('on', scope === 'hour');
+  document.getElementById('wknd-hour-section').style.display = scope === 'hour' ? 'block' : 'none';
 }
 function closeWkndModal() { const m = document.getElementById('wknd-modal'); if (m) m.remove(); }
 function addWkndTask() {
   const txt = document.getElementById('wknd-in').value.trim();
   if (!txt) { showToast('Escribe algo'); return; }
+  let hourPrefix = '';
+  if (wkndScope === 'day') {
+    hourPrefix = '🌞 Todo el día';
+  } else {
+    const from = parseInt(document.getElementById('wknd-hour-from').value, 10);
+    const to = parseInt(document.getElementById('wknd-hour-to').value, 10);
+    if (to <= from) { showToast('La hora final debe ser mayor que la inicial'); return; }
+    const fromLabel = HOURS[from];
+    const toLabel = to < 8 ? HOURS[to] : '16:00';
+    hourPrefix = `⏰ ${fromLabel}–${toLabel}`;
+  }
   if (!wkndTasks[modalKey]) wkndTasks[modalKey] = [];
-  wkndTasks[modalKey].push({ text: txt, done: false });
+  wkndTasks[modalKey].push({ text: `${hourPrefix}\n${txt}`, done: false });
   saveState();
   openWkndModal(modalKey, modalLabel);
   refreshCals();
@@ -200,16 +226,34 @@ function openCellModal(date, hi) {
   const old = document.getElementById('cell-modal'); if (old) old.remove();
   const content = getCellContent(date, hi);
   const dow = (date.getDay() + 6) % 7;
-  const label = `${DLABELS[dow]} ${date.getDate()} ${MS[date.getMonth()]} · ${HOURS[hi]}–${hi<7?HOURS[hi+1]:'16:00'}`;
+  const dateLabel = `${DLABELS[dow]} ${date.getDate()} ${MS[date.getMonth()]}`;
+  const hourLabel = `${HOURS[hi]}–${hi<7?HOURS[hi+1]:'16:00'}`;
 
   const isCustom = content.type === 'custom';
   const isFinca = content.type === 'finca';
   const isLibre = content.type === 'libre';
 
+  // Generar opciones de horas para selects
+  const hoursOpts = HOURS.map((h, i) => `<option value="${i}">${h}</option>`).join('') + `<option value="8">16:00</option>`;
+
   const ov = document.createElement('div');
   ov.className = 'modal-overlay'; ov.id = 'cell-modal';
   ov.innerHTML = `<div class="modal-box">
-    <div class="modal-title">✎ ${escapeHtml(label)}</div>
+    <div class="modal-title">✎ ${escapeHtml(dateLabel)}</div>
+    <div class="field-label">¿Cuándo aplica?</div>
+    <div class="emp-pills" style="margin-bottom:12px">
+      <div class="emp-pill on" id="scope-hour" onclick="setCellScope('hour')">⏰ Solo ${hourLabel}</div>
+      <div class="emp-pill" id="scope-day" onclick="setCellScope('day')">📅 Todo el día</div>
+      <div class="emp-pill" id="scope-range" onclick="setCellScope('range')">⏱ Rango de horas</div>
+    </div>
+    <div id="range-section" style="display:none;margin-bottom:12px">
+      <div class="field-label">Desde / Hasta</div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <select id="range-from" style="flex:1">${HOURS.map((h, i) => `<option value="${i}" ${i===hi?'selected':''}>${h}</option>`).join('')}</select>
+        <span style="font-size:12px;color:var(--text-secondary)">a</span>
+        <select id="range-to" style="flex:1">${HOURS.map((h, i) => `<option value="${i+1}" ${i===hi?'selected':''}>${i<7?HOURS[i+1]:'16:00'}</option>`).join('')}<option value="8">16:00</option></select>
+      </div>
+    </div>
     <div class="field-label">Tipo de contenido</div>
     <div class="emp-pills" style="margin-bottom:12px">
       <div class="emp-pill${isFinca?' on':''}" onclick="setCellType('finca')">🏠 Finca</div>
@@ -232,40 +276,88 @@ function openCellModal(date, hi) {
   </div>`;
   document.body.appendChild(ov);
   ov.onclick = e => { if (e.target === ov) closeCellModal(); };
+  // valores por defecto
+  cellModalScope = 'hour';
+  cellModalSelectedType = content.type === 'wknd' ? 'custom' : content.type;
 }
 function closeCellModal() { const m = document.getElementById('cell-modal'); if (m) m.remove(); }
 let cellModalSelectedType = null;
+let cellModalScope = 'hour'; // 'hour' | 'day' | 'range'
+function setCellScope(scope) {
+  cellModalScope = scope;
+  ['hour','day','range'].forEach(s => {
+    const el = document.getElementById('scope-' + s);
+    if (el) el.classList.toggle('on', s === scope);
+  });
+  document.getElementById('range-section').style.display = scope === 'range' ? 'block' : 'none';
+}
 function setCellType(type) {
   cellModalSelectedType = type;
-  // toggle visual de pills
-  document.querySelectorAll('#cell-modal .emp-pill').forEach(p => p.classList.remove('on'));
+  document.querySelectorAll('#cell-modal .emp-pills')[1].querySelectorAll('.emp-pill').forEach(p => p.classList.remove('on'));
   const map = { finca: 0, custom: 1, libre: 2 };
-  document.querySelectorAll('#cell-modal .emp-pill')[map[type]].classList.add('on');
+  document.querySelectorAll('#cell-modal .emp-pills')[1].querySelectorAll('.emp-pill')[map[type]].classList.add('on');
   document.getElementById('cell-finca-section').style.display = type === 'finca' ? 'block' : 'none';
   document.getElementById('cell-custom-section').style.display = type === 'custom' ? 'block' : 'none';
 }
 function saveCell() {
   const date = cellModalDate, hi = cellModalHi;
-  const key = `${dk(date)}_${hi}`;
   const type = cellModalSelectedType || getCellContent(date, hi).type;
+
+  // Determinar qué horas aplicar
+  let hoursToApply = [];
+  if (cellModalScope === 'day') {
+    // todo el día: horas 0..7 (8:00 a 16:00)
+    hoursToApply = [0,1,2,3,4,5,6,7];
+  } else if (cellModalScope === 'range') {
+    const from = parseInt(document.getElementById('range-from').value, 10);
+    const to = parseInt(document.getElementById('range-to').value, 10);
+    if (to <= from) { showToast('La hora final debe ser mayor que la inicial'); return; }
+    for (let h = from; h < to; h++) hoursToApply.push(h);
+  } else {
+    hoursToApply = [hi];
+  }
+
+  // Validar antes de guardar
+  let value = null;
   if (type === 'finca') {
-    const v = document.getElementById('cell-finca-sel').value;
-    schedOver[key] = { type: 'finca', value: v };
+    value = document.getElementById('cell-finca-sel').value;
   } else if (type === 'custom') {
-    const v = document.getElementById('cell-custom-in').value.trim();
-    if (!v) { showToast('Escribe algo o elige libre'); return; }
-    schedOver[key] = { type: 'custom', value: v };
-  } else if (type === 'libre') {
-    schedOver[key] = { type: 'libre' };
+    value = document.getElementById('cell-custom-in').value.trim();
+    if (!value) { showToast('Escribe algo o elige libre'); return; }
+  }
+
+  const baseKey = dk(date);
+  // Determinar si es fin de semana → guardar como wkndTasks
+  const dow = date.getDay();
+  const isWknd = dow === 0 || dow === 6;
+
+  if (isWknd && type === 'custom') {
+    // En fin de semana, guardamos como tarea de wknd
+    if (!wkndTasks[baseKey]) wkndTasks[baseKey] = [];
+    const hourText = cellModalScope === 'day' ? '🌞 Todo el día' :
+                     cellModalScope === 'range' ? `⏱ ${HOURS[hoursToApply[0]]}–${hoursToApply[hoursToApply.length-1]<7?HOURS[hoursToApply[hoursToApply.length-1]+1]:'16:00'}` :
+                     `⏰ ${HOURS[hi]}`;
+    wkndTasks[baseKey].push({ text: `${hourText}\n${value}`, done: false });
+  } else {
+    // L-V: guardar en schedOver por cada hora del rango
+    hoursToApply.forEach(h => {
+      const key = `${baseKey}_${h}`;
+      if (type === 'finca') schedOver[key] = { type: 'finca', value };
+      else if (type === 'custom') schedOver[key] = { type: 'custom', value };
+      else if (type === 'libre') schedOver[key] = { type: 'libre' };
+    });
   }
   saveState();
   closeCellModal();
   buildWeek();
-  showToast('✅ Casilla actualizada');
+  showToast('✅ Guardado');
 }
 function resetCell() {
-  const key = `${dk(cellModalDate)}_${cellModalHi}`;
-  delete schedOver[key];
+  // Borra TODOS los overrides del día completo
+  const baseKey = dk(cellModalDate);
+  for (let h = 0; h < 8; h++) {
+    delete schedOver[`${baseKey}_${h}`];
+  }
   saveState();
   closeCellModal();
   buildWeek();
@@ -630,9 +722,8 @@ function buildEquipo() {
   const lbl1 = document.createElement('div'); lbl1.className = 'sec-lbl'; lbl1.textContent = '👥 Trabajadores'; lbl1.style.marginTop = '0';
   vv.appendChild(lbl1);
   EMPLEADOS.forEach(e => {
-    let p = 0; FINCAS.forEach(f => { houseData[f].tareas.forEach(t => { if (!t.done && (t.assigns || []).includes(e.name)) p++; }); });
     const el = document.createElement('div'); el.className = 'emp-card';
-    el.innerHTML = `<div class="emp-av">${e.init}</div><div style="flex:1"><div class="emp-name">${escapeHtml(e.name)}</div><div class="emp-zone">${escapeHtml(e.zones)}</div></div>${p?`<span class="notif-b">${p} tarea${p>1?'s':''}</span>`:''}<div class="emp-dot ${e.active?'dot-on':'dot-off'}"></div>`;
+    el.innerHTML = `<div class="emp-av">${e.init}</div><div style="flex:1"><div class="emp-name">${escapeHtml(e.name)}</div><div class="emp-zone">${escapeHtml(e.zones)}</div></div><div class="emp-dot ${e.active?'dot-on':'dot-off'}"></div>`;
     el.onclick = () => openEmpleado(e.name);
     vv.appendChild(el);
   });
@@ -685,43 +776,11 @@ function renderEmpleado() {
   const back = document.createElement('div'); back.className = 'hv-back'; back.innerHTML = `‹ Volver`;
   back.onclick = () => { document.getElementById('view-empleado').style.display = 'none'; document.getElementById('nav-tabs').style.display = 'flex'; document.getElementById('view-equipo').style.display = 'block'; buildEquipo(); };
   vv.appendChild(back);
-  let pending = 0;
-  FINCAS.forEach(f => { houseData[f].tareas.forEach(t => { if (!t.done && (t.assigns || []).includes(emp.name)) pending++; }); });
   const hdr = document.createElement('div'); hdr.className = 'empd-header';
   hdr.innerHTML = `<div class="empd-av">${emp.init}</div><div style="flex:1"><div class="empd-name">${escapeHtml(emp.name)}</div><div class="empd-zone">${escapeHtml(emp.zones)}</div></div><div class="emp-dot ${emp.active?'dot-on':'dot-off'}"></div>`;
   vv.appendChild(hdr);
-  const tabs = document.createElement('div'); tabs.className = 'empd-tabs';
-  [{k:'tareas',label:'✓ Tareas pendientes'},{k:'horas',label:'⏱ Horas'}].forEach(({k,label}) => {
-    const tab = document.createElement('div'); tab.className = 'empd-tab' + (empTab===k?' active':'');
-    const cnt = k==='tareas' ? pending : 0;
-    tab.innerHTML = `${label}${cnt?` <span style="background:#FCEBEB;color:#A32D2D;font-size:9px;padding:1px 5px;border-radius:20px;margin-left:3px">${cnt}</span>`:''}`;
-    tab.onclick = () => { empTab = k; renderEmpleado(); };
-    tabs.appendChild(tab);
-  });
-  vv.appendChild(tabs);
-  if (empTab === 'tareas') renderEmpTareas(vv, emp.name);
-  else renderEmpHoras(vv, emp.name);
-}
-function renderEmpTareas(vv, empName) {
-  let any = false;
-  FINCAS.forEach(f => {
-    houseData[f].tareas.forEach(t => {
-      if (t.done) return;
-      if (!(t.assigns || []).includes(empName)) return;
-      any = true;
-      const el = document.createElement('div'); el.className = 'task-global-item';
-      const otros = (t.assigns || []).filter(a => a !== empName);
-      const aHtml = otros.length ? `<span>👥 con ${escapeHtml(otros.join(', '))}</span>` : '';
-      el.innerHTML = `<div class="tcheck" onclick="event.stopPropagation();toggleEmpT('${f}',${t.id})"></div>
-        <div class="tinfo" onclick="openEditTaskModal('${f}',${t.id})">
-          <div class="ttitle">${escapeHtml(t.title)}</div>
-          <div class="tmeta"><span style="display:flex;align-items:center;gap:2px"><div style="width:7px;height:7px;border-radius:2px;background:${FCOL[f]}"></div>${escapeHtml(f)}</span>${aHtml}</div>
-        </div>
-        <span class="tbadge ${t.prio==='urgent'?'b-u':'b-n'}">${t.prio==='urgent'?'Urgente':'Normal'}</span>`;
-      vv.appendChild(el);
-    });
-  });
-  if (!any) { const el = document.createElement('div'); el.className = 'no-task'; el.textContent = '✓ Sin tareas pendientes'; vv.appendChild(el); }
+  // Solo horas — sin pestañas
+  renderEmpHoras(vv, emp.name);
 }
 function toggleEmpT(f, id) { const t = houseData[f].tareas.find(x => x.id === id); if (t) { t.done = !t.done; saveState(); renderEmpleado(); } }
 
