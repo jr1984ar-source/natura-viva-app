@@ -1,4 +1,4 @@
-/* ===== Natura Viva Gardens — lógica de la app v2 ===== */
+/* ===== Natura Viva Gardens — lógica v3 ===== */
 
 const FINCAS = ['Tonyna','Tagomago','Seahouse','Greco','Batle Bujosa','Cabrera','Sa Vinya','Can Borras',"Puig de s'Espart",'Miró','Gerret','Alzina'];
 const EMPLEADOS = [
@@ -15,6 +15,7 @@ const HOURS = ['8:00','9:00','10:00','11:00','12:00','13:00','14:00','15:00'];
 const MONTHS = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 const MS = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
 
+// Horario BASE — por defecto. Cualquier casilla puede ser sobrescrita en scheduleOverrides
 const BASE = {
   lunes: ['Tonyna','Tonyna','Tonyna','Tonyna','Tagomago','Tagomago','Seahouse','Gerret'],
   martes: ['Greco','Greco','Greco','Greco','Greco','Greco','Greco','Greco'],
@@ -34,10 +35,11 @@ function loadState() {
       wkndTasks: s.wkndTasks || {},
       houseData: s.houseData || initHouseData(),
       empHours: s.empHours || initEmpHours(),
+      schedOver: s.schedOver || {},   // overrides por fecha+hora: { "YYYY-MM-DD_hi": {type:'finca'|'custom'|'libre', value:'...'} }
       nextId: s.nextId || 100
     };
   } catch(e) {
-    return { fuelDays: {}, wkndTasks: {}, houseData: initHouseData(), empHours: initEmpHours(), nextId: 100 };
+    return { fuelDays:{}, wkndTasks:{}, houseData: initHouseData(), empHours: initEmpHours(), schedOver:{}, nextId: 100 };
   }
 }
 function initHouseData() {
@@ -47,19 +49,18 @@ function initHouseData() {
     {id:1,title:'Revisar sistema de riego',prio:'urgent',done:false,assigns:['Jose R.','Alejo']},
     {id:2,title:'Podar palmera entrada',prio:'normal',done:false,assigns:['Alejo']}
   ];
-  hd['Can Borras'].notas = [{text:'El perro está suelto\nEntrar con cuidado.',date:'12 may',img:null}];
+  hd['Can Borras'].notas = [{id:101,text:'El perro está suelto\nEntrar con cuidado.',date:'12 may',img:null}];
   hd['Tonyna'].tareas = [{id:3,title:'Abonar seto trasero',prio:'normal',done:true,assigns:['Cristian']}];
   return hd;
 }
 function initEmpHours() {
-  // empHours[empName][dateKey] = '+6' o '-3' (string firmado)
   const eh = {};
   EMP_NAMES.forEach(n => eh[n] = {});
   return eh;
 }
 function saveState() {
   try {
-    localStorage.setItem('nv_state', JSON.stringify({ fuelDays, wkndTasks, houseData, empHours, nextId }));
+    localStorage.setItem('nv_state', JSON.stringify({ fuelDays, wkndTasks, houseData, empHours, schedOver, nextId }));
   } catch(e) { console.log('No se pudo guardar:', e); }
 }
 
@@ -68,9 +69,14 @@ let fuelDays = _s.fuelDays;
 let wkndTasks = _s.wkndTasks;
 let houseData = _s.houseData;
 let empHours = _s.empHours;
+let schedOver = _s.schedOver;
 let nextId = _s.nextId;
-// asegurar que existen las claves
 EMP_NAMES.forEach(n => { if (!empHours[n]) empHours[n] = {}; });
+// asegurar IDs en notas antiguas (compatibilidad)
+FINCAS.forEach(f => {
+  if (!houseData[f]) houseData[f] = {notas:[], tareas:[]};
+  (houseData[f].notas || []).forEach(n => { if (!n.id) n.id = nextId++; });
+});
 
 let weekOff = 0, monthOff = 0, fuelMonthOff = 0;
 let currentHouse = null, currentTab = 'notas';
@@ -81,7 +87,7 @@ let newTaskAssigns = new Set();
 let newTaskAssignsHouse = new Set();
 let modalKey = '', modalLabel = '';
 let hoursModalKey = '', hoursModalEmp = '', hoursModalLabel = '';
-let tareasMode = 'lista'; // 'lista' | 'finca' | 'persona'
+let tareasMode = 'lista';
 const wkBase = new Date(2026, 4, 11);
 
 // ===== UTILIDADES =====
@@ -98,7 +104,6 @@ function refreshCals() {
 }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function laborableDays(year, month) {
-  // mes 0-indexed. Cuenta lunes-viernes
   let n = 0;
   const dim = new Date(year, month + 1, 0).getDate();
   for (let d = 1; d <= dim; d++) {
@@ -117,26 +122,36 @@ function netHoursForMonth(empName, year, month) {
   }
   return net;
 }
+// Obtener contenido real de una casilla (override > base)
+function getCellContent(date, hi) {
+  const key = `${dk(date)}_${hi}`;
+  if (schedOver[key]) return schedOver[key]; // {type, value}
+  const dow = (date.getDay() + 6) % 7;
+  if (dow >= 5) return { type: 'wknd' }; // fin de semana
+  const finca = BASE[DKEYS[dow]][hi];
+  if (finca) return { type: 'finca', value: finca };
+  return { type: 'libre' };
+}
 
 // ===== MODAL FIN DE SEMANA =====
 function openWkndModal(key, label) {
   modalKey = key; modalLabel = label;
-  const old = document.getElementById('wknd-modal');
-  if (old) old.remove();
+  const old = document.getElementById('wknd-modal'); if (old) old.remove();
   const ov = document.createElement('div');
-  ov.className = 'modal-overlay';
-  ov.id = 'wknd-modal';
+  ov.className = 'modal-overlay'; ov.id = 'wknd-modal';
   const tasks = wkndTasks[key] || [];
   const listHtml = tasks.length ? tasks.map((t,i) => `
     <div class="modal-item">
       <div class="modal-check${t.done?' done':''}" onclick="toggleWknd('${key}',${i})">${t.done?'✓':''}</div>
-      <div class="modal-item-text${t.done?' done-item':''}">${escapeHtml(t.text)}</div>
+      <div class="modal-item-text${t.done?' done-item':''}" onclick="editWkndTask('${key}',${i})">${escapeHtml(t.text)}</div>
+      <button class="edit-btn" onclick="editWkndTask('${key}',${i})">✎</button>
       <button class="del-btn" onclick="removeWknd('${key}',${i})">×</button>
     </div>`).join('') : '<div style="font-size:11px;color:var(--text-tertiary);margin-bottom:6px">Sin tareas todavía.</div>';
   ov.innerHTML = `<div class="modal-box">
     <div class="modal-title">📅 ${escapeHtml(label)}</div>
     <div class="modal-list">${listHtml}</div>
-    <textarea id="wknd-in" placeholder="Escribe en varias líneas si lo necesitas..."></textarea>
+    <div class="field-label">Nueva entrada</div>
+    <textarea id="wknd-in" placeholder="Escribe tarea, nota, trabajo... (puede ocupar varias líneas)"></textarea>
     <div class="modal-btns">
       <div class="btn-cancel" onclick="closeWkndModal()">Cerrar</div>
       <div class="btn-ok" onclick="addWkndTask()">Añadir</div>
@@ -158,16 +173,111 @@ function addWkndTask() {
   showToast('✅ Añadido');
 }
 function toggleWknd(key, idx) { wkndTasks[key][idx].done = !wkndTasks[key][idx].done; saveState(); openWkndModal(key, modalLabel); refreshCals(); }
-function removeWknd(key, idx) { wkndTasks[key].splice(idx, 1); saveState(); openWkndModal(key, modalLabel); refreshCals(); }
+function removeWknd(key, idx) {
+  if (!confirm('¿Borrar esta entrada?')) return;
+  wkndTasks[key].splice(idx, 1);
+  if (wkndTasks[key].length === 0) delete wkndTasks[key];
+  saveState();
+  openWkndModal(key, modalLabel);
+  refreshCals();
+}
+function editWkndTask(key, idx) {
+  const cur = wkndTasks[key][idx];
+  const nuevo = prompt('Editar:', cur.text);
+  if (nuevo === null) return;
+  const t = nuevo.trim();
+  if (!t) { showToast('No puede estar vacío'); return; }
+  cur.text = t;
+  saveState();
+  openWkndModal(key, modalLabel);
+  refreshCals();
+}
 
-// ===== MODAL HORAS EXTRAS DE EMPLEADO =====
+// ===== MODAL EDITAR CASILLA DE SEMANA =====
+let cellModalDate = null, cellModalHi = 0;
+function openCellModal(date, hi) {
+  cellModalDate = date; cellModalHi = hi;
+  const old = document.getElementById('cell-modal'); if (old) old.remove();
+  const content = getCellContent(date, hi);
+  const dow = (date.getDay() + 6) % 7;
+  const label = `${DLABELS[dow]} ${date.getDate()} ${MS[date.getMonth()]} · ${HOURS[hi]}–${hi<7?HOURS[hi+1]:'16:00'}`;
+
+  const isCustom = content.type === 'custom';
+  const isFinca = content.type === 'finca';
+  const isLibre = content.type === 'libre';
+
+  const ov = document.createElement('div');
+  ov.className = 'modal-overlay'; ov.id = 'cell-modal';
+  ov.innerHTML = `<div class="modal-box">
+    <div class="modal-title">✎ ${escapeHtml(label)}</div>
+    <div class="field-label">Tipo de contenido</div>
+    <div class="emp-pills" style="margin-bottom:12px">
+      <div class="emp-pill${isFinca?' on':''}" onclick="setCellType('finca')">🏠 Finca</div>
+      <div class="emp-pill${isCustom?' on':''}" onclick="setCellType('custom')">📝 Texto libre</div>
+      <div class="emp-pill${isLibre?' on':''}" onclick="setCellType('libre')">○ Libre</div>
+    </div>
+    <div id="cell-finca-section" style="display:${isFinca?'block':'none'}">
+      <div class="field-label">Finca</div>
+      <select id="cell-finca-sel">${FINCAS.map(f => `<option value="${escapeHtml(f)}" ${isFinca && content.value===f?'selected':''}>${escapeHtml(f)}</option>`).join('')}</select>
+    </div>
+    <div id="cell-custom-section" style="display:${isCustom?'block':'none'}">
+      <div class="field-label">Texto</div>
+      <textarea id="cell-custom-in" placeholder="Ej: Visita Cliente X, Reunión, Día libre...">${isCustom?escapeHtml(content.value||''):''}</textarea>
+    </div>
+    <div class="modal-btns">
+      <button class="btn-danger" onclick="resetCell()" title="Volver al horario por defecto">↺ Por defecto</button>
+      <div class="btn-cancel" onclick="closeCellModal()">Cancelar</div>
+      <div class="btn-ok" onclick="saveCell()">Guardar</div>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.onclick = e => { if (e.target === ov) closeCellModal(); };
+}
+function closeCellModal() { const m = document.getElementById('cell-modal'); if (m) m.remove(); }
+let cellModalSelectedType = null;
+function setCellType(type) {
+  cellModalSelectedType = type;
+  // toggle visual de pills
+  document.querySelectorAll('#cell-modal .emp-pill').forEach(p => p.classList.remove('on'));
+  const map = { finca: 0, custom: 1, libre: 2 };
+  document.querySelectorAll('#cell-modal .emp-pill')[map[type]].classList.add('on');
+  document.getElementById('cell-finca-section').style.display = type === 'finca' ? 'block' : 'none';
+  document.getElementById('cell-custom-section').style.display = type === 'custom' ? 'block' : 'none';
+}
+function saveCell() {
+  const date = cellModalDate, hi = cellModalHi;
+  const key = `${dk(date)}_${hi}`;
+  const type = cellModalSelectedType || getCellContent(date, hi).type;
+  if (type === 'finca') {
+    const v = document.getElementById('cell-finca-sel').value;
+    schedOver[key] = { type: 'finca', value: v };
+  } else if (type === 'custom') {
+    const v = document.getElementById('cell-custom-in').value.trim();
+    if (!v) { showToast('Escribe algo o elige libre'); return; }
+    schedOver[key] = { type: 'custom', value: v };
+  } else if (type === 'libre') {
+    schedOver[key] = { type: 'libre' };
+  }
+  saveState();
+  closeCellModal();
+  buildWeek();
+  showToast('✅ Casilla actualizada');
+}
+function resetCell() {
+  const key = `${dk(cellModalDate)}_${cellModalHi}`;
+  delete schedOver[key];
+  saveState();
+  closeCellModal();
+  buildWeek();
+  showToast('↺ Por defecto');
+}
+
+// ===== MODAL HORAS EXTRAS =====
 function openHoursModal(empName, key, label) {
   hoursModalEmp = empName; hoursModalKey = key; hoursModalLabel = label;
-  const old = document.getElementById('hours-modal');
-  if (old) old.remove();
+  const old = document.getElementById('hours-modal'); if (old) old.remove();
   const ov = document.createElement('div');
-  ov.className = 'modal-overlay';
-  ov.id = 'hours-modal';
+  ov.className = 'modal-overlay'; ov.id = 'hours-modal';
   const current = (empHours[empName] && empHours[empName][key]) || '';
   ov.innerHTML = `<div class="modal-box">
     <div class="modal-title">⏱ ${escapeHtml(empName)} · ${escapeHtml(label)}</div>
@@ -202,14 +312,12 @@ function saveHours() {
   if (v === '') {
     if (empHours[hoursModalEmp]) delete empHours[hoursModalEmp][hoursModalKey];
   } else {
-    // normalizar a +N o -N
     const m = v.match(/^([+-]?)(\d+)/);
     if (!m) { showToast('Escribe un número (ej. +4 o -3)'); return; }
     const sign = m[1] === '-' ? '-' : '+';
     const num = parseInt(m[2], 10);
-    if (num === 0) {
-      if (empHours[hoursModalEmp]) delete empHours[hoursModalEmp][hoursModalKey];
-    } else {
+    if (num === 0) { if (empHours[hoursModalEmp]) delete empHours[hoursModalEmp][hoursModalKey]; }
+    else {
       if (!empHours[hoursModalEmp]) empHours[hoursModalEmp] = {};
       empHours[hoursModalEmp][hoursModalKey] = sign + num;
     }
@@ -218,6 +326,157 @@ function saveHours() {
   closeHoursModal();
   renderEmpleado();
   showToast('✅ Guardado');
+}
+
+// ===== MODAL EDITAR TAREA =====
+let editTaskCtx = null; // {finca, id}
+function openEditTaskModal(finca, id) {
+  const t = houseData[finca].tareas.find(x => x.id === id);
+  if (!t) return;
+  editTaskCtx = { finca, id };
+  const old = document.getElementById('edit-task-modal'); if (old) old.remove();
+  const assigns = new Set(t.assigns || []);
+  const ov = document.createElement('div');
+  ov.className = 'modal-overlay'; ov.id = 'edit-task-modal';
+  ov.innerHTML = `<div class="modal-box">
+    <div class="modal-title">✎ Editar tarea</div>
+    <div class="field-label">Descripción</div>
+    <input id="et-title" value="${escapeHtml(t.title)}">
+    <div class="field-label">Finca</div>
+    <select id="et-finca">${FINCAS.map(f => `<option value="${escapeHtml(f)}" ${f===finca?'selected':''}>${escapeHtml(f)}</option>`).join('')}</select>
+    <div class="field-label">Asignar a</div>
+    <div class="emp-pills" id="et-pills"></div>
+    <div style="height:10px"></div>
+    <div class="field-label">Prioridad</div>
+    <select id="et-prio">
+      <option value="normal" ${t.prio==='normal'?'selected':''}>Normal</option>
+      <option value="urgent" ${t.prio==='urgent'?'selected':''}>Urgente</option>
+    </select>
+    <div class="modal-btns">
+      <button class="btn-danger" onclick="deleteEditTask()">🗑 Borrar</button>
+      <div class="btn-cancel" onclick="closeEditTaskModal()">Cancelar</div>
+      <div class="btn-ok" onclick="saveEditTask()">Guardar</div>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.onclick = e => { if (e.target === ov) closeEditTaskModal(); };
+  // pintar pills de asignados
+  const pillsEl = document.getElementById('et-pills');
+  EMP_NAMES.forEach(name => {
+    const isOn = assigns.has(name);
+    const p = document.createElement('div'); p.className = 'emp-pill' + (isOn?' on':'');
+    p.innerHTML = `${isOn?'✓ ':''}${name}`;
+    p.onclick = () => {
+      if (assigns.has(name)) assigns.delete(name); else assigns.add(name);
+      openEditTaskModal_refreshPills(assigns);
+    };
+    pillsEl.appendChild(p);
+  });
+  // Guardar referencia para luego
+  window._etAssigns = assigns;
+}
+function openEditTaskModal_refreshPills(assigns) {
+  const pillsEl = document.getElementById('et-pills');
+  if (!pillsEl) return;
+  pillsEl.innerHTML = '';
+  EMP_NAMES.forEach(name => {
+    const isOn = assigns.has(name);
+    const p = document.createElement('div'); p.className = 'emp-pill' + (isOn?' on':'');
+    p.innerHTML = `${isOn?'✓ ':''}${name}`;
+    p.onclick = () => { if (assigns.has(name)) assigns.delete(name); else assigns.add(name); openEditTaskModal_refreshPills(assigns); };
+    pillsEl.appendChild(p);
+  });
+}
+function closeEditTaskModal() { const m = document.getElementById('edit-task-modal'); if (m) m.remove(); editTaskCtx = null; }
+function saveEditTask() {
+  if (!editTaskCtx) return;
+  const { finca: oldFinca, id } = editTaskCtx;
+  const t = houseData[oldFinca].tareas.find(x => x.id === id);
+  if (!t) return;
+  const title = document.getElementById('et-title').value.trim();
+  const newFinca = document.getElementById('et-finca').value;
+  const prio = document.getElementById('et-prio').value;
+  const assigns = Array.from(window._etAssigns || []);
+  if (!title) { showToast('La descripción no puede estar vacía'); return; }
+  t.title = title;
+  t.prio = prio;
+  t.assigns = assigns;
+  if (newFinca !== oldFinca) {
+    // mover
+    houseData[oldFinca].tareas = houseData[oldFinca].tareas.filter(x => x.id !== id);
+    houseData[newFinca].tareas.unshift(t);
+  }
+  saveState();
+  closeEditTaskModal();
+  // Re-render lo que esté visible
+  rerenderActive();
+  showToast('✅ Actualizada');
+}
+function deleteEditTask() {
+  if (!editTaskCtx) return;
+  if (!confirm('¿Borrar esta tarea?')) return;
+  const { finca, id } = editTaskCtx;
+  houseData[finca].tareas = houseData[finca].tareas.filter(x => x.id !== id);
+  saveState();
+  closeEditTaskModal();
+  rerenderActive();
+  showToast('🗑 Borrada');
+}
+
+// ===== MODAL EDITAR NOTA =====
+let editNoteCtx = null;
+function openEditNoteModal(finca, id) {
+  const n = houseData[finca].notas.find(x => x.id === id);
+  if (!n) return;
+  editNoteCtx = { finca, id };
+  const old = document.getElementById('edit-note-modal'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.className = 'modal-overlay'; ov.id = 'edit-note-modal';
+  ov.innerHTML = `<div class="modal-box">
+    <div class="modal-title">✎ Editar nota</div>
+    <textarea id="en-text" style="min-height:100px">${escapeHtml(n.text)}</textarea>
+    <div class="modal-btns">
+      <button class="btn-danger" onclick="deleteEditNote()">🗑 Borrar</button>
+      <div class="btn-cancel" onclick="closeEditNoteModal()">Cancelar</div>
+      <div class="btn-ok" onclick="saveEditNote()">Guardar</div>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.onclick = e => { if (e.target === ov) closeEditNoteModal(); };
+}
+function closeEditNoteModal() { const m = document.getElementById('edit-note-modal'); if (m) m.remove(); editNoteCtx = null; }
+function saveEditNote() {
+  if (!editNoteCtx) return;
+  const { finca, id } = editNoteCtx;
+  const n = houseData[finca].notas.find(x => x.id === id);
+  if (!n) return;
+  const text = document.getElementById('en-text').value.trim();
+  if (!text) { showToast('La nota no puede estar vacía'); return; }
+  n.text = text;
+  saveState();
+  closeEditNoteModal();
+  if (currentHouse === finca) renderHouse();
+  refreshCals();
+  showToast('✅ Actualizada');
+}
+function deleteEditNote() {
+  if (!editNoteCtx) return;
+  if (!confirm('¿Borrar esta nota?')) return;
+  const { finca, id } = editNoteCtx;
+  houseData[finca].notas = houseData[finca].notas.filter(x => x.id !== id);
+  saveState();
+  closeEditNoteModal();
+  if (currentHouse === finca) renderHouse();
+  refreshCals();
+  showToast('🗑 Borrada');
+}
+
+function rerenderActive() {
+  if (document.getElementById('view-tareas').style.display !== 'none') buildTareas();
+  if (document.getElementById('view-casa').style.display !== 'none') renderHouse();
+  if (document.getElementById('view-empleado').style.display !== 'none') renderEmpleado();
+  if (document.getElementById('view-equipo').style.display !== 'none') buildEquipo();
+  refreshCals();
 }
 
 // ===== MES =====
@@ -244,7 +503,13 @@ function buildMonth() {
     cell.className = 'month-day' + (td ? ' today-day' : '') + (weekend ? ' weekend-day' : '');
     let html = `<div class="md-num${td?' today-num':''}">${day}</div>`;
     if (!weekend) {
-      const uniq = [...new Set((BASE[DKEYS[dow]] || []).filter(Boolean))];
+      // Construir lista de fincas mostrando overrides aplicables
+      const fincasUnique = new Set();
+      for (let hi = 0; hi < 8; hi++) {
+        const c = getCellContent(date, hi);
+        if (c.type === 'finca') fincasUnique.add(c.value);
+      }
+      const uniq = [...fincasUnique];
       uniq.slice(0, 3).forEach(f => {
         let b = ''; if (hasTasks(f)) b += `<span class="pip-t">!</span>`; if (hasNotes(f)) b += `<span class="pip-n">*</span>`;
         html += `<div class="md-pip" style="background:${FCOL[f]};color:#333"><span style="flex:1;overflow:hidden;text-overflow:ellipsis">${escapeHtml(f)}</span>${b}</div>`;
@@ -272,7 +537,7 @@ function buildMonth() {
   vv.appendChild(grid);
 }
 
-// ===== SEMANA =====
+// ===== SEMANA — TODAS las casillas editables individualmente =====
 function buildWeek() {
   const vv = document.getElementById('view-semana'); vv.innerHTML = '';
   const dates = getWeekDates(weekOff);
@@ -281,12 +546,12 @@ function buildWeek() {
   const wn = Math.floor((dates[4] - new Date(2026, 0, 2)) / (7 * 86400000));
   if (wn % 2 === 0) { const r = document.createElement('div'); r.className = 'reminder'; r.innerHTML = `🔧 <strong>Este viernes:</strong> limpiar herramientas y furgoneta`; vv.appendChild(r); }
   const wnr = document.createElement('div'); wnr.className = 'week-nav-row';
-  wnr.innerHTML = `<div style="display:flex;align-items:center;gap:7px"><button class="mnav-btn" onclick="weekOff--;buildWeek()">‹</button><div class="week-title">Semana ${title}</div><button class="mnav-btn" onclick="weekOff++;buildWeek()">›</button></div>`;
+  wnr.innerHTML = `<div style="display:flex;align-items:center;gap:7px"><button class="mnav-btn" onclick="weekOff--;buildWeek()">‹</button><div class="week-title">Semana ${title}</div><button class="mnav-btn" onclick="weekOff++;buildWeek()">›</button></div><div style="font-size:10px;color:var(--text-tertiary)">toca para editar</div>`;
   vv.appendChild(wnr);
   const wrap = document.createElement('div'); wrap.className = 'cal-wrap';
   const grid = document.createElement('div'); grid.className = 'cal-grid';
   grid.appendChild(document.createElement('div'));
-  dates.forEach((d,i) => {
+  dates.forEach((d, i) => {
     const h = document.createElement('div');
     h.className = 'chdr' + (isToday(d) ? ' today-c' : '') + (isWE(d) ? ' weekend-c' : '');
     h.innerHTML = `<div class="chdr-day">${DLABELS[i]}</div><div class="chdr-date">${d.getDate()}/${d.getMonth()+1}</div>`;
@@ -295,25 +560,63 @@ function buildWeek() {
   HOURS.forEach((hr, hi) => {
     const ts = document.createElement('div'); ts.className = 'tslot'; ts.textContent = hr; grid.appendChild(ts);
     DKEYS.forEach((day, di) => {
-      const date = dates[di]; const finca = BASE[day][hi] || null;
-      const cell = document.createElement('div'); const isWknd = di >= 5;
-      if (isWknd) {
+      const date = dates[di];
+      const cell = document.createElement('div');
+      const isWknd = di >= 5;
+      const content = getCellContent(date, hi);
+      if (isWknd && hi === 0) {
+        // primera fila de fin de semana muestra resumen y abre modal de wknd
         cell.className = 'ccell c-wknd';
-        if (hi === 0) {
-          const wt = wkndTasks[dk(date)] || [];
-          if (wt.length) { const txt = wt[0].text + (wt.length > 1 ? ` (+${wt.length-1})` : ''); cell.innerHTML = `<div class="wknd-cell-text">${escapeHtml(txt)}</div>`; }
-          else cell.innerHTML = `<div class="wknd-add-lbl">+ añadir</div>`;
+        const wt = wkndTasks[dk(date)] || [];
+        if (wt.length) {
+          const txt = wt[0].text + (wt.length > 1 ? ` (+${wt.length-1})` : '');
+          cell.innerHTML = `<div class="wknd-cell-text">${escapeHtml(txt)}</div>`;
         } else {
-          cell.style.cssText = 'border-radius:4px;height:30px;background:#f6faf4;border:1px solid #daecd2;cursor:pointer;min-width:0;overflow:hidden';
+          cell.innerHTML = `<div class="wknd-add-lbl">+ añadir</div>`;
         }
         cell.onclick = () => openWkndModal(dk(date), `${DLABELS[di]} ${date.getDate()} ${MS[date.getMonth()]}`);
+      } else if (isWknd) {
+        // resto de filas del fin de semana también abren wknd
+        cell.style.cssText = 'border-radius:4px;height:30px;background:#f6faf4;border:1px solid #daecd2;cursor:pointer;min-width:0;overflow:hidden';
+        cell.onclick = () => openWkndModal(dk(date), `${DLABELS[di]} ${date.getDate()} ${MS[date.getMonth()]}`);
       } else {
-        cell.className = 'ccell ' + (finca ? FCLS[finca] || 'c-libre' : 'c-libre');
-        const tasks = finca && hasTasks(finca), notes = finca && hasNotes(finca);
-        let inner = `<div class="cell-name">${escapeHtml(finca||'')}</div>`;
-        if (finca && (tasks || notes)) inner += `<div class="cell-badges">${tasks?`<div class="cb-t">!</div>`:''}${notes?`<div class="cb-n">*</div>`:''}</div>`;
-        cell.innerHTML = inner;
-        if (finca) cell.onclick = () => openHouse(finca);
+        // L-V: casilla EDITABLE individualmente
+        if (content.type === 'finca') {
+          const finca = content.value;
+          cell.className = 'ccell ' + (FCLS[finca] || 'c-libre');
+          const tasks = hasTasks(finca), notes = hasNotes(finca);
+          let inner = `<div class="cell-name">${escapeHtml(finca)}</div>`;
+          if (tasks || notes) inner += `<div class="cell-badges">${tasks?`<div class="cb-t">!</div>`:''}${notes?`<div class="cb-n">*</div>`:''}</div>`;
+          cell.innerHTML = inner;
+          // click corto: abre detalle de la finca; click largo (long press): editar casilla
+          let pressTimer;
+          cell.addEventListener('touchstart', e => {
+            pressTimer = setTimeout(() => { pressTimer = 'fired'; openCellModal(date, hi); }, 500);
+          });
+          cell.addEventListener('touchend', e => {
+            if (pressTimer === 'fired') { pressTimer = null; return; }
+            clearTimeout(pressTimer); pressTimer = null;
+            openHouse(finca);
+          });
+          cell.addEventListener('click', e => {
+            // En desktop, click = ir a la finca. Para editar: doble click o usar el botón pequeño
+            if (e.detail === 2) openCellModal(date, hi);
+          });
+          cell.style.position = 'relative';
+          const editBtn = document.createElement('div');
+          editBtn.textContent = '✎';
+          editBtn.style.cssText = 'position:absolute;top:0;left:1px;font-size:9px;opacity:.5;cursor:pointer;padding:1px 3px;line-height:1';
+          editBtn.onclick = (ev) => { ev.stopPropagation(); openCellModal(date, hi); };
+          cell.appendChild(editBtn);
+        } else if (content.type === 'custom') {
+          cell.className = 'ccell c-custom';
+          cell.innerHTML = `<div class="cell-name">${escapeHtml(content.value)}</div>`;
+          cell.onclick = () => openCellModal(date, hi);
+        } else {
+          cell.className = 'ccell c-libre';
+          cell.innerHTML = `<div class="cell-name" style="opacity:.5">+ editar</div>`;
+          cell.onclick = () => openCellModal(date, hi);
+        }
       }
       grid.appendChild(cell);
     });
@@ -324,7 +627,6 @@ function buildWeek() {
 // ===== EQUIPO (con Combustible dentro) =====
 function buildEquipo() {
   const vv = document.getElementById('view-equipo'); vv.innerHTML = '';
-  // Sección 1: trabajadores clicables
   const lbl1 = document.createElement('div'); lbl1.className = 'sec-lbl'; lbl1.textContent = '👥 Trabajadores'; lbl1.style.marginTop = '0';
   vv.appendChild(lbl1);
   EMPLEADOS.forEach(e => {
@@ -335,14 +637,11 @@ function buildEquipo() {
     vv.appendChild(el);
   });
 
-  // Sección 2: combustible (dentro de equipo, después de trabajadores)
   const lbl2 = document.createElement('div'); lbl2.className = 'sec-lbl'; lbl2.textContent = '⛽ Combustible';
   vv.appendChild(lbl2);
-
   const fuelBox = document.createElement('div');
   fuelBox.style.cssText = 'background:var(--bg-primary);border:1px solid var(--border-soft);border-radius:var(--radius-lg);padding:11px';
   vv.appendChild(fuelBox);
-
   const now = new Date(new Date().getFullYear(), new Date().getMonth() + fuelMonthOff, 1);
   const fhdr = document.createElement('div'); fhdr.className = 'fuel-month-nav';
   fhdr.innerHTML = `<button class="mnav-btn" onclick="fuelMonthOff--;buildEquipo()">‹</button><div style="font-size:12px;font-weight:500">${MONTHS[now.getMonth()]} ${now.getFullYear()}</div><button class="mnav-btn" onclick="fuelMonthOff++;buildEquipo()">›</button>`;
@@ -373,7 +672,7 @@ function buildEquipo() {
 // ===== DETALLE EMPLEADO =====
 function openEmpleado(name) {
   currentEmp = name; empTab = 'tareas'; empMonthOff = 0; empWeekOff = 0; empCalView = 'mes';
-  ['mes','semana','equipo','tareas'].forEach(v => document.getElementById('view-'+v).style.display = 'none');
+  ['semana','mes','tareas','equipo'].forEach(v => document.getElementById('view-'+v).style.display = 'none');
   document.getElementById('view-casa').style.display = 'none';
   document.getElementById('nav-tabs').style.display = 'none';
   document.getElementById('view-empleado').style.display = 'block';
@@ -383,17 +682,14 @@ function renderEmpleado() {
   const vv = document.getElementById('view-empleado'); vv.innerHTML = '';
   const emp = EMPLEADOS.find(e => e.name === currentEmp);
   if (!emp) { switchMain('equipo'); return; }
-  // Botón volver
   const back = document.createElement('div'); back.className = 'hv-back'; back.innerHTML = `‹ Volver`;
   back.onclick = () => { document.getElementById('view-empleado').style.display = 'none'; document.getElementById('nav-tabs').style.display = 'flex'; document.getElementById('view-equipo').style.display = 'block'; buildEquipo(); };
   vv.appendChild(back);
-  // Header del empleado
   let pending = 0;
   FINCAS.forEach(f => { houseData[f].tareas.forEach(t => { if (!t.done && (t.assigns || []).includes(emp.name)) pending++; }); });
   const hdr = document.createElement('div'); hdr.className = 'empd-header';
   hdr.innerHTML = `<div class="empd-av">${emp.init}</div><div style="flex:1"><div class="empd-name">${escapeHtml(emp.name)}</div><div class="empd-zone">${escapeHtml(emp.zones)}</div></div><div class="emp-dot ${emp.active?'dot-on':'dot-off'}"></div>`;
   vv.appendChild(hdr);
-  // Sub-tabs: Tareas / Horas
   const tabs = document.createElement('div'); tabs.className = 'empd-tabs';
   [{k:'tareas',label:'✓ Tareas pendientes'},{k:'horas',label:'⏱ Horas'}].forEach(({k,label}) => {
     const tab = document.createElement('div'); tab.className = 'empd-tab' + (empTab===k?' active':'');
@@ -414,7 +710,14 @@ function renderEmpTareas(vv, empName) {
       if (!(t.assigns || []).includes(empName)) return;
       any = true;
       const el = document.createElement('div'); el.className = 'task-global-item';
-      el.innerHTML = `<div class="tcheck" onclick="toggleEmpT('${f}',${t.id})"></div><div class="tinfo"><div class="ttitle">${escapeHtml(t.title)}</div><div class="tmeta"><span style="display:flex;align-items:center;gap:2px"><div style="width:7px;height:7px;border-radius:2px;background:${FCOL[f]}"></div>${escapeHtml(f)}</span>${(t.assigns||[]).length>1?`<span>👥 con ${(t.assigns||[]).filter(a=>a!==empName).join(', ')}</span>`:''}</div></div><span class="tbadge ${t.prio==='urgent'?'b-u':'b-n'}">${t.prio==='urgent'?'Urgente':'Normal'}</span>`;
+      const otros = (t.assigns || []).filter(a => a !== empName);
+      const aHtml = otros.length ? `<span>👥 con ${escapeHtml(otros.join(', '))}</span>` : '';
+      el.innerHTML = `<div class="tcheck" onclick="event.stopPropagation();toggleEmpT('${f}',${t.id})"></div>
+        <div class="tinfo" onclick="openEditTaskModal('${f}',${t.id})">
+          <div class="ttitle">${escapeHtml(t.title)}</div>
+          <div class="tmeta"><span style="display:flex;align-items:center;gap:2px"><div style="width:7px;height:7px;border-radius:2px;background:${FCOL[f]}"></div>${escapeHtml(f)}</span>${aHtml}</div>
+        </div>
+        <span class="tbadge ${t.prio==='urgent'?'b-u':'b-n'}">${t.prio==='urgent'?'Urgente':'Normal'}</span>`;
       vv.appendChild(el);
     });
   });
@@ -423,7 +726,6 @@ function renderEmpTareas(vv, empName) {
 function toggleEmpT(f, id) { const t = houseData[f].tareas.find(x => x.id === id); if (t) { t.done = !t.done; saveState(); renderEmpleado(); } }
 
 function renderEmpHoras(vv, empName) {
-  // Toggle mes/semana
   const tog = document.createElement('div'); tog.className = 'hr-view-toggle';
   [{k:'mes',l:'📅 Mes'},{k:'semana',l:'🗓️ Semana'}].forEach(({k,l}) => {
     const b = document.createElement('div'); b.className = 'hr-view-btn' + (empCalView===k?' active':'');
@@ -432,11 +734,9 @@ function renderEmpHoras(vv, empName) {
     tog.appendChild(b);
   });
   vv.appendChild(tog);
-
   if (empCalView === 'mes') renderEmpHorasMes(vv, empName);
   else renderEmpHorasSemana(vv, empName);
 
-  // RESUMEN
   const now = empCalView === 'mes' ? new Date(new Date().getFullYear(), new Date().getMonth() + empMonthOff, 1) : (function(){ const d = new Date(wkBase); d.setDate(d.getDate() + empWeekOff*7 + 3); return d; })();
   const Y = now.getFullYear(), M = now.getMonth();
   const labDays = laborableDays(Y, M);
@@ -451,7 +751,6 @@ function renderEmpHoras(vv, empName) {
     <div class="hr-sum-row total"><span>Total del mes</span><span>${total} h</span></div>`;
   vv.appendChild(sum);
 }
-
 function renderEmpHorasMes(vv, empName) {
   const now = new Date(new Date().getFullYear(), new Date().getMonth() + empMonthOff, 1);
   const hdr = document.createElement('div'); hdr.className = 'hr-month-nav';
@@ -471,10 +770,7 @@ function renderEmpHorasMes(vv, empName) {
     const val = (empHours[empName] && empHours[empName][key]) || '';
     const cell = document.createElement('div'); cell.className = 'hr-day-cell' + (weekend ? ' weekend' : '');
     let valHtml = '';
-    if (val) {
-      const isPlus = val.startsWith('+');
-      valHtml = `<div class="hr-day-val ${isPlus?'plus':'minus'}">${val}</div>`;
-    }
+    if (val) { const isPlus = val.startsWith('+'); valHtml = `<div class="hr-day-val ${isPlus?'plus':'minus'}">${val}</div>`; }
     cell.innerHTML = `<div class="hr-day-num">${day}</div>${valHtml}`;
     cell.onclick = () => openHoursModal(empName, key, `${DLABELS[dow]} ${day} ${MS[date.getMonth()]}`);
     grid.appendChild(cell);
@@ -497,12 +793,8 @@ function renderEmpHorasSemana(vv, empName) {
     const val = (empHours[empName] && empHours[empName][key]) || '';
     const cell = document.createElement('div'); cell.className = 'hr-week-day' + (weekend ? ' weekend' : '') + (isToday(d) ? ' today' : '');
     let valHtml = '';
-    if (val) {
-      const isPlus = val.startsWith('+');
-      valHtml = `<div class="hr-wd-val ${isPlus?'plus':'minus'}">${val}</div>`;
-    } else {
-      valHtml = `<div class="hr-wd-empty">+</div>`;
-    }
+    if (val) { const isPlus = val.startsWith('+'); valHtml = `<div class="hr-wd-val ${isPlus?'plus':'minus'}">${val}</div>`; }
+    else { valHtml = `<div class="hr-wd-empty">+</div>`; }
     cell.innerHTML = `<div><div class="hr-wd-label">${DLABELS[i].slice(0,3)}</div><div class="hr-wd-date">${d.getDate()}/${d.getMonth()+1}</div></div>${valHtml}`;
     cell.onclick = () => openHoursModal(empName, key, `${DLABELS[i]} ${d.getDate()} ${MS[d.getMonth()]}`);
     grid.appendChild(cell);
@@ -510,10 +802,9 @@ function renderEmpHorasSemana(vv, empName) {
   vv.appendChild(grid);
 }
 
-// ===== TAREAS (con 3 modos: lista, por finca, por persona) =====
+// ===== TAREAS — SOLO tareas (sin horas) =====
 function buildTareas() {
   const vv = document.getElementById('view-tareas'); vv.innerHTML = '';
-  // Selector de modo de búsqueda
   const mr = document.createElement('div'); mr.className = 'mode-row';
   [{k:'lista',l:'📋 Lista'},{k:'finca',l:'🏠 Por finca'},{k:'persona',l:'👤 Por persona'}].forEach(({k,l}) => {
     const b = document.createElement('div'); b.className = 'mode-btn' + (tareasMode===k?' active':'');
@@ -522,16 +813,14 @@ function buildTareas() {
     mr.appendChild(b);
   });
   vv.appendChild(mr);
-
   if (tareasMode === 'finca') return buildTareasPorFinca(vv);
   if (tareasMode === 'persona') return buildTareasPorPersona(vv);
   buildTareasLista(vv);
 }
-
 function buildTareasLista(vv) {
   if (selectMode && selectedTasks.size > 0) {
     const bar = document.createElement('div'); bar.className = 'bulk-bar';
-    bar.innerHTML = `<span><strong>${selectedTasks.size}</strong> seleccionada${selectedTasks.size>1?'s':''}</span><button class="bulk-btn" onclick="bulkDone()">✓ Marcar hechas</button><button class="bulk-btn" onclick="bulkDelete()">✕ Eliminar</button><button class="bulk-btn" style="margin-left:auto" onclick="selectMode=false;selectedTasks.clear();buildTareas()">Cancelar</button>`;
+    bar.innerHTML = `<span><strong>${selectedTasks.size}</strong> seleccionada${selectedTasks.size>1?'s':''}</span><button class="bulk-btn" onclick="bulkDone()">✓ Hechas</button><button class="bulk-btn" onclick="bulkDelete()">✕ Eliminar</button><button class="bulk-btn" style="margin-left:auto" onclick="selectMode=false;selectedTasks.clear();buildTareas()">Cancelar</button>`;
     vv.appendChild(bar);
   }
   const fr = document.createElement('div'); fr.className = 'filter-row';
@@ -556,20 +845,18 @@ function buildTareasLista(vv) {
       const checkHtml = `<div class="tcheck${t.done?' done':''}" onclick="event.stopPropagation();toggleGT('${f}',${t.id})">${t.done?'✓':''}</div>`;
       const assigns = (t.assigns || []);
       const aHtml = assigns.length ? `<span>👤 ${escapeHtml(assigns.join(', '))}</span>` : '';
-      el.innerHTML = `${selectMode?selBoxHtml:checkHtml}<div class="tinfo"><div class="ttitle${t.done?' done':''}">${escapeHtml(t.title)}</div><div class="tmeta"><span style="display:flex;align-items:center;gap:2px"><div style="width:7px;height:7px;border-radius:2px;background:${FCOL[f]}"></div>${escapeHtml(f)}</span>${aHtml}</div></div><span class="tbadge ${t.prio==='urgent'?'b-u':'b-n'}">${t.prio==='urgent'?'Urgente':'Normal'}</span>`;
+      const tinfoClick = selectMode ? '' : `onclick="openEditTaskModal('${f}',${t.id})"`;
+      el.innerHTML = `${selectMode?selBoxHtml:checkHtml}<div class="tinfo" ${tinfoClick}><div class="ttitle${t.done?' done':''}">${escapeHtml(t.title)}</div><div class="tmeta"><span style="display:flex;align-items:center;gap:2px"><div style="width:7px;height:7px;border-radius:2px;background:${FCOL[f]}"></div>${escapeHtml(f)}</span>${aHtml}</div></div><span class="tbadge ${t.prio==='urgent'?'b-u':'b-n'}">${t.prio==='urgent'?'Urgente':'Normal'}</span>`;
       vv.appendChild(el);
     });
   });
   if (!any) { const el = document.createElement('div'); el.style.cssText = 'font-size:12px;color:var(--text-tertiary);padding:8px 0'; el.textContent = 'Sin tareas en esta vista.'; vv.appendChild(el); }
-  // Añadir nueva
   const box = document.createElement('div'); box.className = 'add-task-box';
-  box.innerHTML = `<div style="font-size:10px;font-weight:500;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.5px;margin-bottom:7px">Nueva tarea</div><input id="gt-title" placeholder="Descripción..."><div class="assign-row"><span class="assign-label">Asignar a:</span><div class="emp-pills" id="gt-pills"></div></div><div class="add-task-row"><select id="gt-finca"><option value="">— Finca —</option>${FINCAS.map(f=>`<option>${f}</option>`).join('')}</select><select id="gt-prio"><option value="normal">Normal</option><option value="urgent">Urgente</option></select><button class="btn-send" onclick="addGlobalTask()">Enviar →</button></div>`;
+  box.innerHTML = `<div class="field-label">Nueva tarea</div><input id="gt-title" placeholder="Descripción..."><div class="assign-row"><span class="assign-label">Asignar a:</span><div class="emp-pills" id="gt-pills"></div></div><div class="add-task-row"><select id="gt-finca"><option value="">— Finca —</option>${FINCAS.map(f=>`<option>${f}</option>`).join('')}</select><select id="gt-prio"><option value="normal">Normal</option><option value="urgent">Urgente</option></select><button class="btn-send" onclick="addGlobalTask()">Enviar →</button></div>`;
   vv.appendChild(box);
   renderEmpPills('gt-pills', newTaskAssigns);
 }
-
 function buildTareasPorFinca(vv) {
-  // Listado clicable de fincas con # pendientes
   let any = false;
   FINCAS.forEach(f => {
     const p = houseData[f].tareas.filter(t => !t.done);
@@ -583,15 +870,12 @@ function buildTareasPorFinca(vv) {
   });
   if (!any) { const el = document.createElement('div'); el.style.cssText='font-size:12px;color:var(--text-tertiary);padding:12px 0;text-align:center'; el.textContent = 'No hay tareas todavía.'; vv.appendChild(el); }
 }
-
 function buildTareasPorPersona(vv) {
   EMPLEADOS.forEach(e => {
     let pending = 0, done = 0;
     FINCAS.forEach(f => {
       houseData[f].tareas.forEach(t => {
-        if ((t.assigns || []).includes(e.name)) {
-          if (t.done) done++; else pending++;
-        }
+        if ((t.assigns || []).includes(e.name)) { if (t.done) done++; else pending++; }
       });
     });
     if (pending === 0 && done === 0) return;
@@ -612,10 +896,9 @@ function renderEmpPills(containerId, setRef) {
     c.appendChild(p);
   });
 }
-
 function toggleGT(f, id) { const t = houseData[f].tareas.find(x => x.id === id); if (t) { t.done = !t.done; saveState(); buildTareas(); } }
-function bulkDone() { selectedTasks.forEach(tid => { const [f, idStr] = tid.split('::'); const t = houseData[f] && houseData[f].tareas.find(x => x.id === +idStr); if (t) t.done = true; }); selectedTasks.clear(); selectMode = false; saveState(); buildTareas(); showToast('✅ Marcadas como hechas'); }
-function bulkDelete() { selectedTasks.forEach(tid => { const [f, idStr] = tid.split('::'); if (houseData[f]) houseData[f].tareas = houseData[f].tareas.filter(x => x.id !== +idStr); }); selectedTasks.clear(); selectMode = false; saveState(); buildTareas(); showToast('🗑 Eliminadas'); }
+function bulkDone() { selectedTasks.forEach(tid => { const [f, idStr] = tid.split('::'); const t = houseData[f] && houseData[f].tareas.find(x => x.id === +idStr); if (t) t.done = true; }); selectedTasks.clear(); selectMode = false; saveState(); buildTareas(); showToast('✅ Hechas'); }
+function bulkDelete() { if (!confirm('¿Borrar las tareas seleccionadas?')) return; selectedTasks.forEach(tid => { const [f, idStr] = tid.split('::'); if (houseData[f]) houseData[f].tareas = houseData[f].tareas.filter(x => x.id !== +idStr); }); selectedTasks.clear(); selectMode = false; saveState(); buildTareas(); showToast('🗑 Eliminadas'); }
 function addGlobalTask() {
   const title = document.getElementById('gt-title').value.trim();
   const finca = document.getElementById('gt-finca').value;
@@ -627,13 +910,13 @@ function addGlobalTask() {
   newTaskAssigns.clear();
   saveState();
   buildTareas();
-  showToast(`✅ Añadida${assigns.length?' · '+assigns.length+' asignado'+(assigns.length>1?'s':''):''}`);
+  showToast(`✅ Añadida en ${finca}`);
 }
 
 // ===== DETALLE CASA =====
 function openHouse(finca) {
   currentHouse = finca; currentTab = 'notas';
-  ['mes','semana','equipo','tareas'].forEach(v => document.getElementById('view-'+v).style.display = 'none');
+  ['semana','mes','tareas','equipo'].forEach(v => document.getElementById('view-'+v).style.display = 'none');
   document.getElementById('view-empleado').style.display = 'none';
   document.getElementById('nav-tabs').style.display = 'none';
   document.getElementById('view-casa').style.display = 'block';
@@ -666,20 +949,36 @@ function renderNotas(vv, f) {
   if (!notas.length) { const el = document.createElement('div'); el.style.cssText = 'font-size:12px;color:var(--text-tertiary);padding:8px 0 10px'; el.textContent = 'Sin notas todavía.'; vv.appendChild(el); }
   notas.forEach(n => {
     const el = document.createElement('div'); el.className = 'nota-item';
-    el.innerHTML = `<div class="nota-text">${escapeHtml(n.text)}</div><div class="nota-meta">🕐 ${escapeHtml(n.date)}</div>`;
+    el.innerHTML = `<div style="flex:1;min-width:0">
+        <div class="nota-text" onclick="openEditNoteModal('${f}',${n.id})">${escapeHtml(n.text)}</div>
+        <div class="nota-meta">🕐 ${escapeHtml(n.date)}</div>
+      </div>
+      <div class="nota-actions">
+        <button class="edit-btn" onclick="openEditNoteModal('${f}',${n.id})">✎</button>
+        <button class="del-btn" onclick="quickDeleteNote('${f}',${n.id})">×</button>
+      </div>`;
     vv.appendChild(el);
   });
   const box = document.createElement('div'); box.className = 'add-box';
-  box.innerHTML = `<div style="font-size:10px;font-weight:500;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.5px;margin-bottom:7px">Nueva nota</div><textarea id="nota-in" placeholder="Escribe en varias líneas..."></textarea><div class="box-btns"><button class="btn-save" onclick="saveNota('${f}')">Guardar</button></div>`;
+  box.innerHTML = `<div class="field-label">Nueva nota</div><textarea id="nota-in" placeholder="Escribe en varias líneas..."></textarea><div class="box-btns"><button class="btn-save" onclick="saveNota('${f}')">Guardar</button></div>`;
   vv.appendChild(box);
+}
+function quickDeleteNote(f, id) {
+  if (!confirm('¿Borrar esta nota?')) return;
+  houseData[f].notas = houseData[f].notas.filter(x => x.id !== id);
+  saveState();
+  renderHouse();
+  refreshCals();
+  showToast('🗑 Borrada');
 }
 function saveNota(f) {
   const txt = document.getElementById('nota-in').value.trim();
   if (!txt) { showToast('Escribe algo'); return; }
   const d = new Date();
-  houseData[f].notas.unshift({ text: txt, date: `${d.getDate()} ${MS[d.getMonth()]}`, img: null });
+  houseData[f].notas.unshift({ id: nextId++, text: txt, date: `${d.getDate()} ${MS[d.getMonth()]}`, img: null });
   saveState();
   renderHouse();
+  refreshCals();
   showToast('✅ Guardada');
 }
 function renderTareasFinca(vv, f) {
@@ -689,11 +988,16 @@ function renderTareasFinca(vv, f) {
     const el = document.createElement('div'); el.className = 'task-item';
     const assigns = (t.assigns || []);
     const aHtml = assigns.length ? `👤 ${escapeHtml(assigns.join(', '))}` : '';
-    el.innerHTML = `<div class="tcheck${t.done?' done':''}" onclick="toggleT('${f}',${t.id})">${t.done?'✓':''}</div><div class="tinfo"><div class="ttitle${t.done?' done':''}">${escapeHtml(t.title)}</div><div class="tmeta">${aHtml}</div></div><span class="tbadge ${t.prio==='urgent'?'b-u':'b-n'}">${t.prio==='urgent'?'Urgente':'Normal'}</span>`;
+    el.innerHTML = `<div class="tcheck${t.done?' done':''}" onclick="event.stopPropagation();toggleT('${f}',${t.id})">${t.done?'✓':''}</div>
+      <div class="tinfo" onclick="openEditTaskModal('${f}',${t.id})">
+        <div class="ttitle${t.done?' done':''}">${escapeHtml(t.title)}</div>
+        <div class="tmeta">${aHtml}</div>
+      </div>
+      <span class="tbadge ${t.prio==='urgent'?'b-u':'b-n'}">${t.prio==='urgent'?'Urgente':'Normal'}</span>`;
     vv.appendChild(el);
   });
   const box = document.createElement('div'); box.className = 'add-box';
-  box.innerHTML = `<div style="font-size:10px;font-weight:500;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.5px;margin-bottom:7px">Nueva tarea</div><input id="task-in" placeholder="Descripción..."><div class="assign-row"><span class="assign-label">Asignar a:</span><div class="emp-pills" id="house-pills"></div></div><div class="box-btns"><select id="task-prio"><option value="normal">Normal</option><option value="urgent">Urgente</option></select><button class="btn-save" onclick="addTarea('${f}')">Enviar →</button></div>`;
+  box.innerHTML = `<div class="field-label">Nueva tarea</div><input id="task-in" placeholder="Descripción..."><div class="assign-row"><span class="assign-label">Asignar a:</span><div class="emp-pills" id="house-pills"></div></div><div class="box-btns"><select id="task-prio"><option value="normal">Normal</option><option value="urgent">Urgente</option></select><button class="btn-save" onclick="addTarea('${f}')">Enviar →</button></div>`;
   vv.appendChild(box);
   newTaskAssignsHouse.clear();
   renderEmpPills('house-pills', newTaskAssignsHouse);
@@ -712,7 +1016,7 @@ function addTarea(f) {
 }
 
 // ===== NAVEGACIÓN =====
-const TABS = ['mes','semana','equipo','tareas'];
+const TABS = ['semana','mes','tareas','equipo'];
 function switchMain(tab) {
   TABS.forEach((t, i) => {
     document.getElementById('view-' + t).style.display = 'none';
@@ -723,16 +1027,15 @@ function switchMain(tab) {
   document.getElementById('nav-tabs').style.display = 'flex';
   document.getElementById('view-' + tab).style.display = 'block';
   document.querySelectorAll('.nav-tab')[TABS.indexOf(tab)].classList.add('active');
-  if (tab === 'mes') buildMonth();
   if (tab === 'semana') buildWeek();
-  if (tab === 'equipo') buildEquipo();
+  if (tab === 'mes') buildMonth();
   if (tab === 'tareas') buildTareas();
+  if (tab === 'equipo') buildEquipo();
 }
 
-// listeners
 document.querySelectorAll('.nav-tab').forEach(tab => {
   tab.addEventListener('click', () => switchMain(tab.dataset.tab));
 });
 
-// arranque
-buildMonth();
+// arranque: Semana primero
+buildWeek();

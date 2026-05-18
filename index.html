@@ -33,16 +33,16 @@
     <span class="bell">🔔</span>
   </div>
   <div class="nav-tabs" id="nav-tabs">
-    <div class="nav-tab active" data-tab="mes">📅 Mes</div>
-    <div class="nav-tab" data-tab="semana">🗓️ Semana</div>
-    <div class="nav-tab" data-tab="equipo">👥 Equipo</div>
+    <div class="nav-tab active" data-tab="semana">🗓️ Semana</div>
+    <div class="nav-tab" data-tab="mes">📅 Mes</div>
     <div class="nav-tab" data-tab="tareas">✓ Tareas</div>
+    <div class="nav-tab" data-tab="equipo">👥 Equipo</div>
   </div>
   <div class="content">
-    <div id="view-mes"></div>
-    <div id="view-semana" style="display:none"></div>
-    <div id="view-equipo" style="display:none"></div>
+    <div id="view-semana"></div>
+    <div id="view-mes" style="display:none"></div>
     <div id="view-tareas" style="display:none"></div>
+    <div id="view-equipo" style="display:none"></div>
     <div id="view-casa" style="display:none"></div>
     <div id="view-empleado" style="display:none"></div>
   </div>
@@ -53,7 +53,10 @@
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('sw.js').then(
-        () => console.log('SW registrado'),
+        reg => {
+          // Forzar comprobación de actualización
+          reg.update();
+        },
         err => console.log('SW falló:', err)
       );
     });
