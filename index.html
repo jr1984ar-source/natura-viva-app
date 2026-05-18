@@ -69,13 +69,22 @@
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('sw.js').then(
-        reg => {
-          // Forzar comprobación de actualización
-          reg.update();
-        },
-        err => console.log('SW falló:', err)
-      );
+      navigator.serviceWorker.register('sw.js').then(reg => {
+        // Comprobar actualizaciones cada vez que se carga
+        reg.update();
+        // Si se detecta versión nueva, recargar automáticamente
+        reg.addEventListener('updatefound', () => {
+          const newSW = reg.installing;
+          if (newSW) {
+            newSW.addEventListener('statechange', () => {
+              if (newSW.state === 'activated' && navigator.serviceWorker.controller) {
+                console.log('Versión nueva activada — recargando');
+                window.location.reload();
+              }
+            });
+          }
+        });
+      }).catch(err => console.log('SW falló:', err));
     });
   }
 </script>

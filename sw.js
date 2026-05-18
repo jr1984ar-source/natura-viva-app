@@ -1,5 +1,5 @@
 // Service Worker — permite que la app funcione sin internet
-const CACHE_NAME = 'natura-viva-v13';
+const CACHE_NAME = 'natura-viva-v14';
 const ASSETS = [
   './',
   './index.html',
@@ -30,13 +30,28 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
-  e.respondWith(
-    caches.match(e.request).then(r => r || fetch(e.request).then(resp => {
-      // cachear lo nuevo
-      return caches.open(CACHE_NAME).then(cache => {
-        cache.put(e.request, resp.clone());
+  const url = new URL(e.request.url);
+  // Network-first para archivos clave (HTML/CSS/JS) — coge la versión nueva si hay internet
+  const isCoreAsset = url.pathname.endsWith('.html') || url.pathname.endsWith('.css') ||
+                      url.pathname.endsWith('.js')   || url.pathname === '/' ||
+                      url.pathname.endsWith('/natura-viva-app/');
+  if (isCoreAsset) {
+    e.respondWith(
+      fetch(e.request).then(resp => {
+        const copy = resp.clone();
+        caches.open(CACHE_NAME).then(cache => cache.put(e.request, copy)).catch(()=>{});
         return resp;
-      }).catch(() => resp);
-    })).catch(() => caches.match('./index.html'))
-  );
+      }).catch(() => caches.match(e.request).then(r => r || caches.match('./index.html')))
+    );
+  } else {
+    // Cache-first para imágenes y demás
+    e.respondWith(
+      caches.match(e.request).then(r => r || fetch(e.request).then(resp => {
+        return caches.open(CACHE_NAME).then(cache => {
+          cache.put(e.request, resp.clone());
+          return resp;
+        }).catch(() => resp);
+      })).catch(() => caches.match('./index.html'))
+    );
+  }
 });
