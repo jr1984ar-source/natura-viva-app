@@ -17,7 +17,7 @@ const MS = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','d
 
 // Horario BASE — por defecto. Cualquier casilla puede ser sobrescrita en scheduleOverrides
 const BASE = {
-  lunes: ['Tonyna','Tonyna','Tonyna','Tonyna','Tagomago','Tagomago','Seahouse','Gerret'],
+  lunes: ['Tonyna','Tonyna','Tonyna','Gerret','Seahouse','Seahouse','Tagomago','Tagomago'],
   martes: ['Greco','Greco','Greco','Greco','Greco','Greco','Greco','Greco'],
   miercoles: ['Batle Bujosa','Batle Bujosa','Batle Bujosa','Cabrera','Cabrera','Sa Vinya','Sa Vinya','Sa Vinya'],
   jueves: ['Tagomago','Tagomago','Can Borras','Can Borras','Can Borras',"Puig de s'Espart","Puig de s'Espart",'Alzina'],
@@ -27,15 +27,25 @@ const BASE = {
 };
 
 // ===== ESTADO + PERSISTENCIA =====
+// Versión del esquema de datos. Si cambia, se borran los datos antiguos automáticamente.
+const DATA_VERSION = 2;
+
 function loadState() {
   try {
+    const storedVersion = parseInt(localStorage.getItem('nv_data_version') || '0', 10);
+    if (storedVersion < DATA_VERSION) {
+      // Datos antiguos (incluye ejemplos viejos) — limpiar
+      localStorage.removeItem('nv_state');
+      localStorage.setItem('nv_data_version', String(DATA_VERSION));
+      return { fuelDays:{}, wkndTasks:{}, houseData: initHouseData(), empHours: initEmpHours(), schedOver:{}, nextId: 100 };
+    }
     const s = JSON.parse(localStorage.getItem('nv_state') || '{}');
     return {
       fuelDays: s.fuelDays || {},
       wkndTasks: s.wkndTasks || {},
       houseData: s.houseData || initHouseData(),
       empHours: s.empHours || initEmpHours(),
-      schedOver: s.schedOver || {},   // overrides por fecha+hora: { "YYYY-MM-DD_hi": {type:'finca'|'custom'|'libre', value:'...'} }
+      schedOver: s.schedOver || {},
       nextId: s.nextId || 100
     };
   } catch(e) {
