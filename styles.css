@@ -341,3 +341,151 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
   margin-bottom: 8px;
   display: block;
 }
+
+/* ===== LOGO EN HEADER (imagen) ===== */
+.header-logo {
+  height: 32px;
+  object-fit: contain;
+}
+.user-badge {
+  background: rgba(255,255,255,.15);
+  color: #fff;
+  font-size: 11px;
+  padding: 4px 9px;
+  border-radius: 12px;
+  font-weight: 500;
+}
+.logout-btn {
+  background: rgba(255,255,255,.1);
+  border: 1px solid rgba(255,255,255,.2);
+  color: #fff;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.logout-btn:hover { background: rgba(255,255,255,.2); }
+
+/* ===== PANTALLA DE LOGIN ===== */
+.login-screen {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: var(--green-dark);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 1000;
+}
+.login-box {
+  background: #fff;
+  border-radius: 16px;
+  padding: 32px 24px 28px;
+  width: 100%;
+  max-width: 340px;
+  box-shadow: 0 12px 36px rgba(0,0,0,.3);
+}
+.login-logo {
+  display: block;
+  width: 100%;
+  max-width: 260px;
+  margin: 0 auto 8px;
+  object-fit: contain;
+  filter: invert(1);
+}
+.login-subtitle {
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 24px;
+}
+.login-field {
+  margin-bottom: 12px;
+}
+.login-field label {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 5px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+.login-field input {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 11px 12px;
+  font-size: 15px;
+  font-family: inherit;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}
+.login-field input:focus {
+  outline: none;
+  border-color: var(--green);
+  background: #fff;
+}
+.login-error {
+  color: #b03030;
+  font-size: 12px;
+  min-height: 18px;
+  text-align: center;
+  margin: 4px 0 8px;
+}
+.login-submit {
+  width: 100%;
+  background: var(--green-dark);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 13px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+}
+.login-submit:hover { background: var(--green); }
+.login-submit:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ===== INPUT TEXTO PEQUEÑO PARA COMENTARIOS ===== */
+.hr-comment-input {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  margin-bottom: 8px;
+}
+.hr-day-comment {
+  font-size: 7px;
+  color: var(--text-tertiary);
+  line-height: 1.1;
+  margin-top: 1px;
+  text-align: center;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hr-wd-comment {
+  font-size: 8px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+  padding: 0 2px;
+  line-height: 1.1;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

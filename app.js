@@ -1,5 +1,117 @@
 /* ===== Natura Viva Gardens — lógica v3 ===== */
 
+// ============================================================
+// SISTEMA DE AUTENTICACIÓN
+// ============================================================
+// IMPORTANTE: esto es una barrera de entrada básica, no seguridad real.
+// Las contraseñas viven en el JS — quien sepa abrir Developer Tools las verá.
+// Suficiente para uso interno del equipo.
+
+const USERS = {
+  'jrar':     { pass: 'naturaviva2026', name: 'JRAR', role: 'admin' },
+  'joser':    { pass: 'joser2026',      name: 'Jose R.', role: 'employee' },
+  'alejo':    { pass: 'alejo2026',      name: 'Alejo',   role: 'employee' },
+  'cristian': { pass: 'cristian2026',   name: 'Cristian',role: 'employee' }
+};
+
+// Estado de intentos fallidos para bloqueo temporal
+let loginFailCount = parseInt(sessionStorage.getItem('nv_fail') || '0', 10);
+let loginLockUntil = parseInt(sessionStorage.getItem('nv_lock') || '0', 10);
+
+function isLoggedIn() {
+  const u = localStorage.getItem('nv_session_user');
+  return u && USERS[u];
+}
+function currentUser() {
+  const u = localStorage.getItem('nv_session_user');
+  return USERS[u] ? { username: u, ...USERS[u] } : null;
+}
+function doLogin(user, pass) {
+  // Comprobar bloqueo por intentos
+  const now = Date.now();
+  if (loginLockUntil && now < loginLockUntil) {
+    const secs = Math.ceil((loginLockUntil - now) / 1000);
+    return { ok: false, msg: `Demasiados intentos. Espera ${secs}s.` };
+  }
+  const userLower = (user || '').toLowerCase().trim();
+  const u = USERS[userLower];
+  if (!u || u.pass !== pass) {
+    loginFailCount++;
+    sessionStorage.setItem('nv_fail', String(loginFailCount));
+    if (loginFailCount >= 5) {
+      loginLockUntil = now + 30000; // 30s
+      sessionStorage.setItem('nv_lock', String(loginLockUntil));
+      loginFailCount = 0;
+      sessionStorage.setItem('nv_fail', '0');
+      return { ok: false, msg: 'Demasiados intentos fallidos. Bloqueado 30 segundos.' };
+    }
+    return { ok: false, msg: `Usuario o contraseña incorrectos. (${5 - loginFailCount} intentos restantes)` };
+  }
+  // OK
+  localStorage.setItem('nv_session_user', userLower);
+  loginFailCount = 0;
+  sessionStorage.setItem('nv_fail', '0');
+  loginLockUntil = 0;
+  sessionStorage.removeItem('nv_lock');
+  return { ok: true };
+}
+function doLogout() {
+  if (!confirm('¿Cerrar sesión?')) return;
+  localStorage.removeItem('nv_session_user');
+  location.reload();
+}
+function showLoginScreen() {
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+  setTimeout(() => { const u = document.getElementById('login-user'); if (u) u.focus(); }, 60);
+}
+function showApp() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+  // Pintar nombre del usuario en la barra superior
+  const cu = currentUser();
+  if (cu) {
+    const badge = document.getElementById('current-user-badge');
+    if (badge) badge.textContent = cu.name;
+  }
+}
+
+// Listener del formulario de login
+document.addEventListener('DOMContentLoaded', () => {
+  const btn = document.getElementById('login-btn');
+  const userInp = document.getElementById('login-user');
+  const passInp = document.getElementById('login-pass');
+  const errEl = document.getElementById('login-error');
+  const tryLogin = () => {
+    const r = doLogin(userInp.value, passInp.value);
+    if (!r.ok) {
+      errEl.textContent = r.msg;
+      passInp.value = '';
+      passInp.focus();
+      return;
+    }
+    errEl.textContent = '';
+    showApp();
+    // arrancar la app
+    if (typeof buildWeek === 'function') buildWeek();
+  };
+  btn.addEventListener('click', tryLogin);
+  passInp.addEventListener('keydown', e => { if (e.key === 'Enter') tryLogin(); });
+  userInp.addEventListener('keydown', e => { if (e.key === 'Enter') passInp.focus(); });
+
+  const logoutBtn = document.getElementById('logout-btn');
+  if (logoutBtn) logoutBtn.addEventListener('click', doLogout);
+
+  // Decidir qué mostrar al cargar
+  if (isLoggedIn()) {
+    showApp();
+  } else {
+    showLoginScreen();
+  }
+});
+
+// ============================================================
+
 const FINCAS = ['Tonyna','Tagomago','Seahouse','Greco','Batle Bujosa','Cabrera','Sa Vinya','Can Borras',"Puig de s'Espart",'Miró','Gerret','Alzina'];
 const EMPLEADOS = [
   {init:'JR', name:'Jose R.', zones:'Lunes, Jueves', active:true},
@@ -117,12 +229,22 @@ function laborableDays(year, month) {
   }
   return n;
 }
+function getHourValue(empName, k) {
+  const raw = empHours[empName] && empHours[empName][k];
+  if (!raw) return '';
+  return typeof raw === 'string' ? raw : (raw.value || '');
+}
+function getHourNote(empName, k) {
+  const raw = empHours[empName] && empHours[empName][k];
+  if (!raw || typeof raw === 'string') return '';
+  return raw.note || '';
+}
 function netHoursForMonth(empName, year, month) {
   let net = 0;
   const dim = new Date(year, month + 1, 0).getDate();
   for (let d = 1; d <= dim; d++) {
     const k = dk(new Date(year, month, d));
-    const v = empHours[empName] && empHours[empName][k];
+    const v = getHourValue(empName, k);
     if (v) net += parseInt(v, 10) || 0;
   }
   return net;
@@ -403,7 +525,13 @@ function openHoursModal(empName, key, label) {
   const old = document.getElementById('hours-modal'); if (old) old.remove();
   const ov = document.createElement('div');
   ov.className = 'modal-overlay'; ov.id = 'hours-modal';
-  const current = (empHours[empName] && empHours[empName][key]) || '';
+  const raw = (empHours[empName] && empHours[empName][key]);
+  // Compatibilidad: si es string antiguo, lo tratamos como value sin nota
+  let curVal = '', curNote = '';
+  if (raw) {
+    if (typeof raw === 'string') curVal = raw;
+    else { curVal = raw.value || ''; curNote = raw.note || ''; }
+  }
   ov.innerHTML = `<div class="modal-box">
     <div class="modal-title">⏱ ${escapeHtml(empName)} · ${escapeHtml(label)}</div>
     <div style="font-size:11px;color:var(--text-secondary);margin-bottom:8px">Horas extras (+) o menos (–) sobre la jornada normal de 8 h.</div>
@@ -420,7 +548,10 @@ function openHoursModal(empName, key, label) {
       <button class="q-hr-btn minus" onclick="setHr('-8')">−8</button>
       <button class="q-hr-btn zero" onclick="setHr('')">Borrar</button>
     </div>
-    <input id="hr-in" placeholder="O escribe (ej: +3, -5)" value="${escapeHtml(current)}">
+    <div class="field-label">Horas</div>
+    <input id="hr-in" placeholder="Ej: +3, -5" value="${escapeHtml(curVal)}">
+    <div class="field-label">Motivo (opcional)</div>
+    <input id="hr-note" class="hr-comment-input" placeholder="Ej: plantar jardín alemán, estaba enfermo..." value="${escapeHtml(curNote)}">
     <div class="modal-btns">
       <div class="btn-cancel" onclick="closeHoursModal()">Cancelar</div>
       <div class="btn-ok" onclick="saveHours()">Guardar</div>
@@ -434,6 +565,7 @@ function closeHoursModal() { const m = document.getElementById('hours-modal'); i
 function setHr(v) { const inp = document.getElementById('hr-in'); if (inp) inp.value = v; }
 function saveHours() {
   let v = document.getElementById('hr-in').value.trim();
+  const note = (document.getElementById('hr-note').value || '').trim();
   if (v === '') {
     if (empHours[hoursModalEmp]) delete empHours[hoursModalEmp][hoursModalKey];
   } else {
@@ -444,7 +576,7 @@ function saveHours() {
     if (num === 0) { if (empHours[hoursModalEmp]) delete empHours[hoursModalEmp][hoursModalKey]; }
     else {
       if (!empHours[hoursModalEmp]) empHours[hoursModalEmp] = {};
-      empHours[hoursModalEmp][hoursModalKey] = sign + num;
+      empHours[hoursModalEmp][hoursModalKey] = { value: sign + num, note };
     }
   }
   saveState();
@@ -998,6 +1130,7 @@ function renderCombustible() {
   const dim = new Date(Y, M + 1, 0).getDate();
   for (let i = 0; i < startDow; i++) { const d = document.createElement('div'); d.className = 'fuel-day-cell other'; grid.appendChild(d); }
   let totalMes = 0, countMes = 0, totalGasoil = 0, totalGasolina = 0;
+  const byVehicle = {}; // {vehicleName: total}
   for (let day = 1; day <= dim; day++) {
     const date = new Date(Y, M, day);
     const key = dk(date);
@@ -1008,11 +1141,18 @@ function renderCombustible() {
     if (isFueled) {
       const amount = (typeof val === 'object') ? val.amount : 0;
       const type = (typeof val === 'object') ? val.type : 'gasoil';
-      const icon = type === 'gasoil' ? '⛽' : '⛽';
+      const vehicle = (typeof val === 'object' && val.vehicle) ? val.vehicle : '';
       inner += `<div style="font-size:11px;font-weight:600;color:#7a4f10;line-height:1">${amount}€</div>`;
-      inner += `<div style="font-size:8px;color:var(--text-tertiary);text-transform:uppercase;line-height:1.2">${type.slice(0,3)}</div>`;
+      if (vehicle) {
+        // Abreviar vehículo
+        const abbr = vehicle.replace('Yamaha ', 'Y.').replace('Transporter','Trans.').replace('Crafter','Crafter');
+        inner += `<div style="font-size:7px;color:var(--text-tertiary);line-height:1.1;text-align:center;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(abbr)}</div>`;
+      } else {
+        inner += `<div style="font-size:8px;color:var(--text-tertiary);text-transform:uppercase;line-height:1.2">${type.slice(0,3)}</div>`;
+      }
       totalMes += amount; countMes++;
       if (type === 'gasoil') totalGasoil += amount; else totalGasolina += amount;
+      if (vehicle) byVehicle[vehicle] = (byVehicle[vehicle] || 0) + amount;
     }
     cell.innerHTML = inner;
     cell.onclick = () => openFuelEntryModal(date);
@@ -1024,32 +1164,51 @@ function renderCombustible() {
 
   // Resumen del mes
   const sum = document.createElement('div'); sum.className = 'hr-summary';
+  let vehicleRows = '';
+  Object.entries(byVehicle).forEach(([v, t]) => {
+    const fuel = VEHICLES[v] === 'gasoil' ? '🚐' : '🏍';
+    vehicleRows += `<div class="hr-sum-row"><span>${fuel} ${escapeHtml(v)}</span><span>${t.toFixed(2)} €</span></div>`;
+  });
   sum.innerHTML = `<div class="hr-sum-title">Resumen ${MONTHS[M]} ${Y}</div>
     <div class="hr-sum-row"><span>Repostajes</span><span>${countMes}</span></div>
-    <div class="hr-sum-row"><span>Gasoil</span><span>${totalGasoil.toFixed(2)} €</span></div>
-    <div class="hr-sum-row"><span>Gasolina</span><span>${totalGasolina.toFixed(2)} €</span></div>
+    ${vehicleRows}
+    <div class="hr-sum-row"><span style="color:var(--text-tertiary);font-size:11px">Gasoil total</span><span style="color:var(--text-tertiary);font-size:11px">${totalGasoil.toFixed(2)} €</span></div>
+    <div class="hr-sum-row"><span style="color:var(--text-tertiary);font-size:11px">Gasolina total</span><span style="color:var(--text-tertiary);font-size:11px">${totalGasolina.toFixed(2)} €</span></div>
     <div class="hr-sum-row total"><span>Total mes</span><span>${totalMes.toFixed(2)} €</span></div>`;
   vv.appendChild(sum);
 }
+// Vehículos y sus tipos de combustible
+const VEHICLES = {
+  'Transporter': 'gasoil',
+  'Crafter':     'gasoil',
+  'Yamaha WR':   'gasolina',
+  'Yamaha FX':   'gasolina'
+};
+
 function openFuelEntryModal(date) {
   fuelEntryDate = date;
   const key = dk(date);
   const existing = fuelDays[key];
   const curAmount = (existing && typeof existing === 'object') ? existing.amount : 50;
-  const curType = (existing && typeof existing === 'object') ? existing.type : 'gasoil';
+  const curVehicle = (existing && typeof existing === 'object' && existing.vehicle) ? existing.vehicle : 'Transporter';
   const dow = (date.getDay() + 6) % 7;
   const label = `${DLABELS[dow]} ${date.getDate()} ${MS[date.getMonth()]}`;
 
   const old = document.getElementById('fuel-modal'); if (old) old.remove();
   const ov = document.createElement('div');
   ov.className = 'modal-overlay'; ov.id = 'fuel-modal';
+  // Botones de vehículos
+  const vehicleBtns = Object.entries(VEHICLES).map(([v, t]) => {
+    const isOn = v === curVehicle;
+    const icon = t === 'gasoil' ? '🚐' : '🏍';
+    return `<div class="emp-pill${isOn?' on':''}" data-vehicle="${escapeHtml(v)}" onclick="setFuelVehicle('${escapeHtml(v)}')">${icon} ${escapeHtml(v)}</div>`;
+  }).join('');
+
   ov.innerHTML = `<div class="modal-box">
     <div class="modal-title">⛽ ${escapeHtml(label)}</div>
-    <div class="field-label">Tipo</div>
-    <div class="emp-pills" style="margin-bottom:10px">
-      <div class="emp-pill${curType==='gasoil'?' on':''}" id="fuel-type-gasoil" onclick="setFuelType('gasoil')">⛽ Gasoil</div>
-      <div class="emp-pill${curType==='gasolina'?' on':''}" id="fuel-type-gasolina" onclick="setFuelType('gasolina')">⛽ Gasolina</div>
-    </div>
+    <div class="field-label">Vehículo</div>
+    <div class="emp-pills" style="margin-bottom:6px">${vehicleBtns}</div>
+    <div id="fuel-type-info" style="font-size:11px;color:var(--text-secondary);margin-bottom:10px"></div>
     <div class="field-label">Cantidad (€)</div>
     <input id="fuel-amount" type="number" inputmode="decimal" step="0.01" value="${curAmount}" placeholder="50">
     <div class="quick-hours" style="margin-bottom:0">
@@ -1069,21 +1228,26 @@ function openFuelEntryModal(date) {
   </div>`;
   document.body.appendChild(ov);
   ov.onclick = e => { if (e.target === ov) closeFuelModal(); };
-  window._fuelType = curType;
+  window._fuelVehicle = curVehicle;
+  // pintar info del combustible asociado al vehículo
+  document.getElementById('fuel-type-info').innerHTML = `Combustible: <strong>${VEHICLES[curVehicle] === 'gasoil' ? '⛽ Gasoil' : '⛽ Gasolina'}</strong> (automático según vehículo)`;
   setTimeout(() => { const a = document.getElementById('fuel-amount'); if (a) a.select(); }, 60);
 }
-function setFuelType(t) {
-  window._fuelType = t;
-  document.getElementById('fuel-type-gasoil').classList.toggle('on', t === 'gasoil');
-  document.getElementById('fuel-type-gasolina').classList.toggle('on', t === 'gasolina');
+function setFuelVehicle(v) {
+  window._fuelVehicle = v;
+  document.querySelectorAll('#fuel-modal .emp-pill').forEach(p => p.classList.toggle('on', p.dataset.vehicle === v));
+  const type = VEHICLES[v];
+  document.getElementById('fuel-type-info').innerHTML = `Combustible: <strong>${type === 'gasoil' ? '⛽ Gasoil' : '⛽ Gasolina'}</strong> (automático según vehículo)`;
 }
 function setFuelAmount(n) { const a = document.getElementById('fuel-amount'); if (a) a.value = n; }
 function closeFuelModal() { const m = document.getElementById('fuel-modal'); if (m) m.remove(); fuelEntryDate = null; }
 function saveFuelEntry() {
   const amount = parseFloat(document.getElementById('fuel-amount').value);
   if (isNaN(amount) || amount <= 0) { showToast('Cantidad no válida'); return; }
+  const vehicle = window._fuelVehicle || 'Transporter';
+  const type = VEHICLES[vehicle];
   const key = dk(fuelEntryDate);
-  fuelDays[key] = { amount, type: window._fuelType || 'gasoil' };
+  fuelDays[key] = { amount, type, vehicle };
   saveState();
   closeFuelModal();
   renderCombustible();
@@ -1165,10 +1329,15 @@ function renderEmpHorasMes(vv, empName) {
     const dow = (date.getDay() + 6) % 7;
     const weekend = dow >= 5;
     const key = dk(date);
-    const val = (empHours[empName] && empHours[empName][key]) || '';
+    const val = getHourValue(empName, key);
+    const note = getHourNote(empName, key);
     const cell = document.createElement('div'); cell.className = 'hr-day-cell' + (weekend ? ' weekend' : '');
     let valHtml = '';
-    if (val) { const isPlus = val.startsWith('+'); valHtml = `<div class="hr-day-val ${isPlus?'plus':'minus'}">${val}</div>`; }
+    if (val) {
+      const isPlus = val.startsWith('+');
+      valHtml = `<div class="hr-day-val ${isPlus?'plus':'minus'}">${val}</div>`;
+      if (note) valHtml += `<div class="hr-day-comment" title="${escapeHtml(note)}">${escapeHtml(note)}</div>`;
+    }
     cell.innerHTML = `<div class="hr-day-num">${day}</div>${valHtml}`;
     cell.onclick = () => openHoursModal(empName, key, `${DLABELS[dow]} ${day} ${MS[date.getMonth()]}`);
     grid.appendChild(cell);
@@ -1188,10 +1357,15 @@ function renderEmpHorasSemana(vv, empName) {
   dates.forEach((d, i) => {
     const weekend = i >= 5;
     const key = dk(d);
-    const val = (empHours[empName] && empHours[empName][key]) || '';
+    const val = getHourValue(empName, key);
+    const note = getHourNote(empName, key);
     const cell = document.createElement('div'); cell.className = 'hr-week-day' + (weekend ? ' weekend' : '') + (isToday(d) ? ' today' : '');
     let valHtml = '';
-    if (val) { const isPlus = val.startsWith('+'); valHtml = `<div class="hr-wd-val ${isPlus?'plus':'minus'}">${val}</div>`; }
+    if (val) {
+      const isPlus = val.startsWith('+');
+      valHtml = `<div class="hr-wd-val ${isPlus?'plus':'minus'}">${val}</div>`;
+      if (note) valHtml += `<div class="hr-wd-comment">${escapeHtml(note)}</div>`;
+    }
     else { valHtml = `<div class="hr-wd-empty">+</div>`; }
     cell.innerHTML = `<div><div class="hr-wd-label">${DLABELS[i].slice(0,3)}</div><div class="hr-wd-date">${d.getDate()}/${d.getMonth()+1}</div></div>${valHtml}`;
     cell.onclick = () => openHoursModal(empName, key, `${DLABELS[i]} ${d.getDate()} ${MS[d.getMonth()]}`);
@@ -1564,5 +1738,7 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
   tab.addEventListener('click', () => switchMain(tab.dataset.tab));
 });
 
-// arranque: Semana primero
-buildWeek();
+// arranque: solo si hay sesión activa pinta la semana
+if (isLoggedIn()) {
+  buildWeek();
+}

@@ -1,5 +1,5 @@
 // Service Worker — permite que la app funcione sin internet
-const CACHE_NAME = 'natura-viva-v10';
+const CACHE_NAME = 'natura-viva-v11';
 const ASSETS = [
   './',
   './index.html',
@@ -8,7 +8,8 @@ const ASSETS = [
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',
-  './icons/apple-touch-icon.png'
+  './icons/apple-touch-icon.png',
+  './icons/logo-header.png'
 ];
 
 self.addEventListener('install', e => {
