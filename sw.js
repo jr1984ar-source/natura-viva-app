@@ -1,5 +1,5 @@
 // Service Worker — permite que la app funcione sin internet
-const CACHE_NAME = 'natura-viva-v14';
+const CACHE_NAME = 'natura-viva-v15';
 const ASSETS = [
   './',
   './index.html',

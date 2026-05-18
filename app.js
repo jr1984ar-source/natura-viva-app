@@ -8,7 +8,7 @@
 // Suficiente para uso interno del equipo.
 
 const USERS = {
-  'jrar':     { pass: 'naturaviva2026', name: 'JRAR',     role: 'admin' },
+  'jrar':     { pass: 'naturaviva2026', name: 'José R.',  role: 'admin' },
   'alejo':    { pass: 'alejo2026',      name: 'Alejo',    role: 'alejo' },
   'cristian': { pass: 'cristian2026',   name: 'Cristian', role: 'cristian' }
 };
@@ -133,9 +133,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
 const FINCAS = ['Tonyna','Tagomago','Seahouse','Greco','Batle Bujosa','Cabrera','Sa Vinya','Can Borras',"Puig de s'Espart",'Miró','Gerret','Alzina'];
 const EMPLEADOS = [
-  {init:'JR', name:'JRAR',     zones:'Admin / Todos los días', active:true},
-  {init:'AL', name:'Alejo',    zones:'Martes, Miércoles', active:true},
-  {init:'CR', name:'Cristian', zones:'Viernes', active:true}
+  {init:'JR', name:'José R.',  zones:'', active:true},
+  {init:'AL', name:'Alejo',    zones:'', active:true},
+  {init:'CR', name:'Cristian', zones:'', active:true}
 ];
 const EMP_NAMES = EMPLEADOS.map(e => e.name);
 const FCLS = {Tonyna:'c-tonyna',Tagomago:'c-tagomago',Seahouse:'c-seahouse',Greco:'c-greco','Batle Bujosa':'c-batle',Cabrera:'c-cabrera','Sa Vinya':'c-savinya','Can Borras':'c-borras',"Puig de s'Espart":'c-puig','Miró':'c-miro',Gerret:'c-gerret',Alzina:'c-alzina'};
@@ -235,8 +235,33 @@ function dk(d) { return d.toISOString().split('T')[0]; }
 function getWeekDates(off) { return DKEYS.map((_,i) => { const d = new Date(wkBase); d.setDate(d.getDate() + off*7 + i); return d; }); }
 function isToday(d) { const t = new Date(); return d.getDate() === t.getDate() && d.getMonth() === t.getMonth() && d.getFullYear() === t.getFullYear(); }
 function isWE(d) { return d.getDay() === 0 || d.getDay() === 6; }
-function hasTasks(f) { return houseData[f] && houseData[f].tareas.some(t => !t.done); }
-function hasNotes(f) { return houseData[f] && houseData[f].notas.length > 0; }
+// Comprueba si la finca tiene tareas pendientes EN GENERAL (sin filtrar hora)
+function hasTasksGeneral(f) { return houseData[f] && houseData[f].tareas.some(t => !t.done); }
+function hasNotesGeneral(f) { return houseData[f] && houseData[f].notas.length > 0; }
+// Comprueba si la finca tiene tareas pendientes/notas APLICABLES a una casilla concreta (date, hi)
+// Lógica: una tarea/nota aparece en una casilla si:
+//  - schedule = null → aparece donde la finca tiene horas BASE (comportamiento clásico "En esta finca")
+//  - schedule = {day, from:null, to:null} → aparece en todas las casillas de ese día concreto
+//  - schedule = {day, from, to} → aparece SOLO en las casillas hi >= from && hi < to de ese día
+function itemAppliesToCell(item, date, hi) {
+  const s = item.schedule;
+  const dateKey = dk(date);
+  if (!s) return true; // En esta finca → siempre que la casilla sea de la finca, ya filtrado fuera
+  if (s.day !== dateKey) return false;
+  if (s.from === null || s.from === undefined) return true; // todo el día
+  return hi >= s.from && hi < s.to;
+}
+function hasTasksInCell(f, date, hi) {
+  if (!houseData[f]) return false;
+  return houseData[f].tareas.some(t => !t.done && itemAppliesToCell(t, date, hi));
+}
+function hasNotesInCell(f, date, hi) {
+  if (!houseData[f]) return false;
+  return houseData[f].notas.some(n => itemAppliesToCell(n, date, hi));
+}
+// Compatibilidad — el código antiguo seguía usando hasTasks/hasNotes "general"
+function hasTasks(f) { return hasTasksGeneral(f); }
+function hasNotes(f) { return hasNotesGeneral(f); }
 function showToast(m) { const t = document.getElementById('toast'); t.textContent = m; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2300); }
 function refreshCals() {
   if (document.getElementById('view-mes').style.display !== 'none') buildMonth();
@@ -1023,7 +1048,7 @@ function buildWeek() {
       if (content.type === 'finca') {
         const finca = content.value;
         cell.className = 'ccell ' + (FCLS[finca] || 'c-libre');
-        const tasks = hasTasks(finca), notes = hasNotes(finca);
+        const tasks = hasTasksInCell(finca, date, hi), notes = hasNotesInCell(finca, date, hi);
         let inner = `<div class="cell-name">${escapeHtml(finca)}</div>`;
         if (tasks || notes) inner += `<div class="cell-badges">${tasks?`<div class="cb-t">!</div>`:''}${notes?`<div class="cb-n">*</div>`:''}</div>`;
         cell.innerHTML = inner;
@@ -1093,7 +1118,7 @@ function buildEquipo() {
   vv.appendChild(lbl1);
   EMPLEADOS.forEach(e => {
     const el = document.createElement('div'); el.className = 'emp-card';
-    el.innerHTML = `<div class="emp-av">${e.init}</div><div style="flex:1"><div class="emp-name">${escapeHtml(e.name)}</div><div class="emp-zone">${escapeHtml(e.zones)}</div></div><div class="emp-dot ${e.active?'dot-on':'dot-off'}"></div>`;
+    el.innerHTML = `<div class="emp-av">${e.init}</div><div style="flex:1"><div class="emp-name">${escapeHtml(e.name)}</div></div><div class="emp-dot ${e.active?'dot-on':'dot-off'}"></div>`;
     el.onclick = () => openEmpleado(e.name);
     vv.appendChild(el);
   });
@@ -1349,7 +1374,7 @@ function renderEmpleado() {
   back.onclick = () => { document.getElementById('view-empleado').style.display = 'none'; document.getElementById('nav-tabs').style.display = 'flex'; document.getElementById('view-equipo').style.display = 'block'; buildEquipo(); };
   vv.appendChild(back);
   const hdr = document.createElement('div'); hdr.className = 'empd-header';
-  hdr.innerHTML = `<div class="empd-av">${emp.init}</div><div style="flex:1"><div class="empd-name">${escapeHtml(emp.name)}</div><div class="empd-zone">${escapeHtml(emp.zones)}</div></div><div class="emp-dot ${emp.active?'dot-on':'dot-off'}"></div>`;
+  hdr.innerHTML = `<div class="empd-av">${emp.init}</div><div style="flex:1"><div class="empd-name">${escapeHtml(emp.name)}</div></div><div class="emp-dot ${emp.active?'dot-on':'dot-off'}"></div>`;
   vv.appendChild(hdr);
   // Solo horas — sin pestañas
   renderEmpHoras(vv, emp.name);
