@@ -8,11 +8,30 @@
 // Suficiente para uso interno del equipo.
 
 const USERS = {
-  'jrar':     { pass: 'naturaviva2026', name: 'JRAR', role: 'admin' },
-  'joser':    { pass: 'joser2026',      name: 'Jose R.', role: 'employee' },
-  'alejo':    { pass: 'alejo2026',      name: 'Alejo',   role: 'employee' },
-  'cristian': { pass: 'cristian2026',   name: 'Cristian',role: 'employee' }
+  'jrar':     { pass: 'naturaviva2026', name: 'JRAR',     role: 'admin' },
+  'alejo':    { pass: 'alejo2026',      name: 'Alejo',    role: 'alejo' },
+  'cristian': { pass: 'cristian2026',   name: 'Cristian', role: 'cristian' }
 };
+
+// Permisos por rol
+function canEditHours() {
+  const u = currentUser();
+  if (!u) return false;
+  return u.role !== 'cristian'; // cristian solo puede VER horas
+}
+function canEditEquipo() {
+  const u = currentUser();
+  if (!u) return false;
+  return true; // jrar y alejo y cristian pueden ver, alejo puede editar como jrar
+  // El bloqueo de cristian es solo en horas (canEditHours)
+}
+function allowedVehicles() {
+  const u = currentUser();
+  if (!u) return Object.keys(VEHICLES_ALL);
+  if (u.role === 'admin') return Object.keys(VEHICLES_ALL); // todos
+  // alejo y cristian: solo Crafter y Otro
+  return ['Crafter', 'Otro'];
+}
 
 // Estado de intentos fallidos para bloqueo temporal
 let loginFailCount = parseInt(sessionStorage.getItem('nv_fail') || '0', 10);
@@ -114,9 +133,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
 const FINCAS = ['Tonyna','Tagomago','Seahouse','Greco','Batle Bujosa','Cabrera','Sa Vinya','Can Borras',"Puig de s'Espart",'Miró','Gerret','Alzina'];
 const EMPLEADOS = [
-  {init:'JR', name:'Jose R.', zones:'Lunes, Jueves', active:true},
   {init:'AL', name:'Alejo', zones:'Martes, Miércoles', active:true},
-  {init:'CR', name:'Cristian', zones:'Viernes', active:false}
+  {init:'CR', name:'Cristian', zones:'Viernes', active:true}
 ];
 const EMP_NAMES = EMPLEADOS.map(e => e.name);
 const FCLS = {Tonyna:'c-tonyna',Tagomago:'c-tagomago',Seahouse:'c-seahouse',Greco:'c-greco','Batle Bujosa':'c-batle',Cabrera:'c-cabrera','Sa Vinya':'c-savinya','Can Borras':'c-borras',"Puig de s'Espart":'c-puig','Miró':'c-miro',Gerret:'c-gerret',Alzina:'c-alzina'};
@@ -179,6 +197,10 @@ function saveState() {
   try {
     localStorage.setItem('nv_state', JSON.stringify({ fuelDays, wkndTasks, houseData, empHours, schedOver, nextId }));
   } catch(e) { console.log('No se pudo guardar:', e); }
+  // Subir a la nube si Firebase está activo
+  if (window.NV_SYNC && window.NV_SYNC.enabled) {
+    window.NV_SYNC.pushToCloud();
+  }
 }
 
 const _s = loadState();
@@ -521,6 +543,15 @@ function resetCell() {
 
 // ===== MODAL HORAS EXTRAS =====
 function openHoursModal(empName, key, label) {
+  // Cristian solo puede VER horas, no editarlas
+  if (!canEditHours()) {
+    const raw = empHours[empName] && empHours[empName][key];
+    if (!raw) { showToast('Sin horas registradas ese día'); return; }
+    const val = typeof raw === 'string' ? raw : (raw.value || '');
+    const note = typeof raw === 'string' ? '' : (raw.note || '');
+    alert(`${empName} · ${label}\n\nHoras: ${val}${note ? '\nMotivo: ' + note : ''}\n\n(Solo lectura — pide a JRAR para editar)`);
+    return;
+  }
   hoursModalEmp = empName; hoursModalKey = key; hoursModalLabel = label;
   const old = document.getElementById('hours-modal'); if (old) old.remove();
   const ov = document.createElement('div');
@@ -1178,29 +1209,41 @@ function renderCombustible() {
   vv.appendChild(sum);
 }
 // Vehículos y sus tipos de combustible
-const VEHICLES = {
+const VEHICLES_ALL = {
   'Transporter': 'gasoil',
   'Crafter':     'gasoil',
   'Yamaha WR':   'gasolina',
-  'Yamaha FX':   'gasolina'
+  'Yamaha FX':   'gasolina',  // moto de agua
+  'Otro':        'gasoil'      // por defecto gasoil; el usuario elige tipo si es Otro
 };
+// Compatibilidad — el modal sigue usando VEHICLES
+const VEHICLES = VEHICLES_ALL;
 
 function openFuelEntryModal(date) {
   fuelEntryDate = date;
   const key = dk(date);
   const existing = fuelDays[key];
   const curAmount = (existing && typeof existing === 'object') ? existing.amount : 50;
-  const curVehicle = (existing && typeof existing === 'object' && existing.vehicle) ? existing.vehicle : 'Transporter';
+  const allowed = allowedVehicles();
+  let curVehicle = (existing && typeof existing === 'object' && existing.vehicle) ? existing.vehicle : allowed[0];
+  // Si el usuario actual no tiene permiso para ese vehículo, ajustar
+  if (!allowed.includes(curVehicle)) curVehicle = allowed[0];
+  const curType = (existing && typeof existing === 'object' && existing.type) ? existing.type : (VEHICLES_ALL[curVehicle] || 'gasoil');
   const dow = (date.getDay() + 6) % 7;
   const label = `${DLABELS[dow]} ${date.getDate()} ${MS[date.getMonth()]}`;
 
   const old = document.getElementById('fuel-modal'); if (old) old.remove();
   const ov = document.createElement('div');
   ov.className = 'modal-overlay'; ov.id = 'fuel-modal';
-  // Botones de vehículos
-  const vehicleBtns = Object.entries(VEHICLES).map(([v, t]) => {
+
+  // Solo los vehículos que el usuario puede elegir
+  const vehicleBtns = allowed.map(v => {
+    const t = VEHICLES_ALL[v];
     const isOn = v === curVehicle;
-    const icon = t === 'gasoil' ? '🚐' : '🏍';
+    let icon = '🚐';
+    if (v === 'Yamaha WR') icon = '🏍';
+    else if (v === 'Yamaha FX') icon = '🚤';
+    else if (v === 'Otro') icon = '⛽';
     return `<div class="emp-pill${isOn?' on':''}" data-vehicle="${escapeHtml(v)}" onclick="setFuelVehicle('${escapeHtml(v)}')">${icon} ${escapeHtml(v)}</div>`;
   }).join('');
 
@@ -1209,6 +1252,13 @@ function openFuelEntryModal(date) {
     <div class="field-label">Vehículo</div>
     <div class="emp-pills" style="margin-bottom:6px">${vehicleBtns}</div>
     <div id="fuel-type-info" style="font-size:11px;color:var(--text-secondary);margin-bottom:10px"></div>
+    <div id="fuel-type-picker" style="display:none;margin-bottom:10px">
+      <div class="field-label">Tipo de combustible</div>
+      <div class="emp-pills">
+        <div class="emp-pill" id="ft-gasoil" onclick="setOtroFuelType('gasoil')">⛽ Gasoil</div>
+        <div class="emp-pill" id="ft-gasolina" onclick="setOtroFuelType('gasolina')">⛽ Gasolina</div>
+      </div>
+    </div>
     <div class="field-label">Cantidad (€)</div>
     <input id="fuel-amount" type="number" inputmode="decimal" step="0.01" value="${curAmount}" placeholder="50">
     <div class="quick-hours" style="margin-bottom:0">
@@ -1229,23 +1279,41 @@ function openFuelEntryModal(date) {
   document.body.appendChild(ov);
   ov.onclick = e => { if (e.target === ov) closeFuelModal(); };
   window._fuelVehicle = curVehicle;
-  // pintar info del combustible asociado al vehículo
-  document.getElementById('fuel-type-info').innerHTML = `Combustible: <strong>${VEHICLES[curVehicle] === 'gasoil' ? '⛽ Gasoil' : '⛽ Gasolina'}</strong> (automático según vehículo)`;
+  window._fuelTypeOtro = curType;
+  updateFuelTypeUI();
   setTimeout(() => { const a = document.getElementById('fuel-amount'); if (a) a.select(); }, 60);
+}
+function updateFuelTypeUI() {
+  const v = window._fuelVehicle;
+  const isOtro = v === 'Otro';
+  document.getElementById('fuel-type-picker').style.display = isOtro ? 'block' : 'none';
+  if (isOtro) {
+    const t = window._fuelTypeOtro || 'gasoil';
+    document.getElementById('ft-gasoil').classList.toggle('on', t === 'gasoil');
+    document.getElementById('ft-gasolina').classList.toggle('on', t === 'gasolina');
+    document.getElementById('fuel-type-info').innerHTML = `Combustible: <strong>${t === 'gasoil' ? '⛽ Gasoil' : '⛽ Gasolina'}</strong>`;
+  } else {
+    const type = VEHICLES_ALL[v];
+    document.getElementById('fuel-type-info').innerHTML = `Combustible: <strong>${type === 'gasoil' ? '⛽ Gasoil' : '⛽ Gasolina'}</strong> (automático según vehículo)`;
+  }
 }
 function setFuelVehicle(v) {
   window._fuelVehicle = v;
-  document.querySelectorAll('#fuel-modal .emp-pill').forEach(p => p.classList.toggle('on', p.dataset.vehicle === v));
-  const type = VEHICLES[v];
-  document.getElementById('fuel-type-info').innerHTML = `Combustible: <strong>${type === 'gasoil' ? '⛽ Gasoil' : '⛽ Gasolina'}</strong> (automático según vehículo)`;
+  document.querySelectorAll('#fuel-modal [data-vehicle]').forEach(p => p.classList.toggle('on', p.dataset.vehicle === v));
+  updateFuelTypeUI();
+}
+function setOtroFuelType(t) {
+  window._fuelTypeOtro = t;
+  updateFuelTypeUI();
 }
 function setFuelAmount(n) { const a = document.getElementById('fuel-amount'); if (a) a.value = n; }
 function closeFuelModal() { const m = document.getElementById('fuel-modal'); if (m) m.remove(); fuelEntryDate = null; }
 function saveFuelEntry() {
   const amount = parseFloat(document.getElementById('fuel-amount').value);
   if (isNaN(amount) || amount <= 0) { showToast('Cantidad no válida'); return; }
-  const vehicle = window._fuelVehicle || 'Transporter';
-  const type = VEHICLES[vehicle];
+  const vehicle = window._fuelVehicle || 'Crafter';
+  // Tipo: si es Otro usa la selección manual, si no se deduce del vehículo
+  const type = vehicle === 'Otro' ? (window._fuelTypeOtro || 'gasoil') : VEHICLES_ALL[vehicle];
   const key = dk(fuelEntryDate);
   fuelDays[key] = { amount, type, vehicle };
   saveState();

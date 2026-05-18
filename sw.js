@@ -1,10 +1,12 @@
 // Service Worker — permite que la app funcione sin internet
-const CACHE_NAME = 'natura-viva-v11';
+const CACHE_NAME = 'natura-viva-v12';
 const ASSETS = [
   './',
   './index.html',
   './styles.css',
   './app.js',
+  './firebase-config.js',
+  './firebase-sync.js',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',

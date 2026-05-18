@@ -395,7 +395,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
   max-width: 260px;
   margin: 0 auto 8px;
   object-fit: contain;
-  filter: invert(1);
 }
 .login-subtitle {
   text-align: center;
