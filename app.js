@@ -28,7 +28,7 @@ const BASE = {
 
 // ===== ESTADO + PERSISTENCIA =====
 // Versión del esquema de datos. Si cambia, se borran los datos antiguos automáticamente.
-const DATA_VERSION = 2;
+const DATA_VERSION = 3;
 
 function loadState() {
   try {
@@ -139,8 +139,21 @@ function getCellContent(date, hi) {
 }
 
 // ===== MODAL FIN DE SEMANA =====
+// Estructura nueva: wkndTasks[fecha] = [{id, text, done, fromHour, toHour}]
+//   fromHour=null y toHour=null → todo el día
+//   fromHour/toHour son índices: 0=8:00, 1=9:00 ... 7=15:00, 8=16:00
+let wkndEditingIdx = null; // si estamos editando una entrada existente
+
+function hoursLabel(from, to) {
+  if (from === null || from === undefined) return '🌞 Todo el día';
+  const fromLabel = HOURS[from];
+  const toLabel = to < 8 ? HOURS[to] : '16:00';
+  return `⏰ ${fromLabel}–${toLabel}`;
+}
+
 function openWkndModal(key, label) {
   modalKey = key; modalLabel = label;
+  wkndEditingIdx = null;
   const old = document.getElementById('wknd-modal'); if (old) old.remove();
   const ov = document.createElement('div');
   ov.className = 'modal-overlay'; ov.id = 'wknd-modal';
@@ -148,15 +161,15 @@ function openWkndModal(key, label) {
   const listHtml = tasks.length ? tasks.map((t,i) => `
     <div class="modal-item">
       <div class="modal-check${t.done?' done':''}" onclick="toggleWknd('${key}',${i})">${t.done?'✓':''}</div>
-      <div class="modal-item-text${t.done?' done-item':''}" onclick="editWkndTask('${key}',${i})">${escapeHtml(t.text)}</div>
+      <div class="modal-item-text${t.done?' done-item':''}" onclick="editWkndTask('${key}',${i})"><div style="font-size:9px;color:var(--text-tertiary);margin-bottom:2px">${hoursLabel(t.fromHour, t.toHour)}</div>${escapeHtml(t.text)}</div>
       <button class="edit-btn" onclick="editWkndTask('${key}',${i})">✎</button>
       <button class="del-btn" onclick="removeWknd('${key}',${i})">×</button>
     </div>`).join('') : '<div style="font-size:11px;color:var(--text-tertiary);margin-bottom:6px">Sin entradas todavía.</div>';
   ov.innerHTML = `<div class="modal-box">
     <div class="modal-title">📅 ${escapeHtml(label)}</div>
     <div class="modal-list">${listHtml}</div>
-    <div class="field-label">Nueva entrada</div>
-    <textarea id="wknd-in" placeholder="Escribe tarea, nota, trabajo... (puede ocupar varias líneas)"></textarea>
+    <div class="field-label" id="wknd-form-title">Nueva entrada</div>
+    <textarea id="wknd-in" placeholder="Escribe tarea, nota, trabajo..."></textarea>
     <div class="field-label">¿Cuándo?</div>
     <div class="emp-pills" style="margin-bottom:10px">
       <div class="emp-pill on" id="wknd-scope-day" onclick="setWkndScope('day')">🌞 Todo el día</div>
@@ -171,7 +184,7 @@ function openWkndModal(key, label) {
     </div>
     <div class="modal-btns">
       <div class="btn-cancel" onclick="closeWkndModal()">Cerrar</div>
-      <div class="btn-ok" onclick="addWkndTask()">Añadir</div>
+      <div class="btn-ok" id="wknd-ok-btn" onclick="saveWkndTask()">Añadir</div>
     </div>
   </div>`;
   document.body.appendChild(ov);
@@ -179,6 +192,7 @@ function openWkndModal(key, label) {
   wkndScope = 'day';
   setTimeout(() => { const ta = document.getElementById('wknd-in'); if (ta) ta.focus(); }, 40);
 }
+
 let wkndScope = 'day';
 function setWkndScope(scope) {
   wkndScope = scope;
@@ -186,27 +200,29 @@ function setWkndScope(scope) {
   document.getElementById('wknd-scope-hour').classList.toggle('on', scope === 'hour');
   document.getElementById('wknd-hour-section').style.display = scope === 'hour' ? 'block' : 'none';
 }
-function closeWkndModal() { const m = document.getElementById('wknd-modal'); if (m) m.remove(); }
-function addWkndTask() {
+function closeWkndModal() { const m = document.getElementById('wknd-modal'); if (m) m.remove(); wkndEditingIdx = null; }
+
+function saveWkndTask() {
   const txt = document.getElementById('wknd-in').value.trim();
   if (!txt) { showToast('Escribe algo'); return; }
-  let hourPrefix = '';
-  if (wkndScope === 'day') {
-    hourPrefix = '🌞 Todo el día';
-  } else {
-    const from = parseInt(document.getElementById('wknd-hour-from').value, 10);
-    const to = parseInt(document.getElementById('wknd-hour-to').value, 10);
-    if (to <= from) { showToast('La hora final debe ser mayor que la inicial'); return; }
-    const fromLabel = HOURS[from];
-    const toLabel = to < 8 ? HOURS[to] : '16:00';
-    hourPrefix = `⏰ ${fromLabel}–${toLabel}`;
+  let fromHour = null, toHour = null;
+  if (wkndScope === 'hour') {
+    fromHour = parseInt(document.getElementById('wknd-hour-from').value, 10);
+    toHour = parseInt(document.getElementById('wknd-hour-to').value, 10);
+    if (toHour <= fromHour) { showToast('La hora final debe ser mayor que la inicial'); return; }
   }
   if (!wkndTasks[modalKey]) wkndTasks[modalKey] = [];
-  wkndTasks[modalKey].push({ text: `${hourPrefix}\n${txt}`, done: false });
+  if (wkndEditingIdx !== null) {
+    // editar entrada existente
+    wkndTasks[modalKey][wkndEditingIdx] = { ...wkndTasks[modalKey][wkndEditingIdx], text: txt, fromHour, toHour };
+    showToast('✅ Actualizada');
+  } else {
+    wkndTasks[modalKey].push({ id: nextId++, text: txt, done: false, fromHour, toHour });
+    showToast('✅ Añadida');
+  }
   saveState();
   openWkndModal(modalKey, modalLabel);
   refreshCals();
-  showToast('✅ Añadido');
 }
 function toggleWknd(key, idx) { wkndTasks[key][idx].done = !wkndTasks[key][idx].done; saveState(); openWkndModal(key, modalLabel); refreshCals(); }
 function removeWknd(key, idx) {
@@ -219,14 +235,21 @@ function removeWknd(key, idx) {
 }
 function editWkndTask(key, idx) {
   const cur = wkndTasks[key][idx];
-  const nuevo = prompt('Editar:', cur.text);
-  if (nuevo === null) return;
-  const t = nuevo.trim();
-  if (!t) { showToast('No puede estar vacío'); return; }
-  cur.text = t;
-  saveState();
-  openWkndModal(key, modalLabel);
-  refreshCals();
+  wkndEditingIdx = idx;
+  // rellenar el formulario con valores actuales
+  setTimeout(() => {
+    document.getElementById('wknd-form-title').textContent = 'Editar entrada';
+    document.getElementById('wknd-in').value = cur.text;
+    document.getElementById('wknd-ok-btn').textContent = 'Guardar';
+    if (cur.fromHour !== null && cur.fromHour !== undefined) {
+      setWkndScope('hour');
+      document.getElementById('wknd-hour-from').value = cur.fromHour;
+      document.getElementById('wknd-hour-to').value = cur.toHour;
+    } else {
+      setWkndScope('day');
+    }
+    document.getElementById('wknd-in').focus();
+  }, 20);
 }
 
 // ===== MODAL EDITAR CASILLA DE SEMANA =====
@@ -531,12 +554,24 @@ function openEditNoteModal(finca, id) {
   const n = houseData[finca].notas.find(x => x.id === id);
   if (!n) return;
   editNoteCtx = { finca, id };
+  window._editNotePhotoData = n.img || null; // foto actual
   const old = document.getElementById('edit-note-modal'); if (old) old.remove();
   const ov = document.createElement('div');
   ov.className = 'modal-overlay'; ov.id = 'edit-note-modal';
+  const photoHtml = n.img ? `<img class="modal-photo-preview" src="${n.img}">` : '';
   ov.innerHTML = `<div class="modal-box">
     <div class="modal-title">✎ Editar nota</div>
+    <div class="field-label">Texto</div>
     <textarea id="en-text" style="min-height:100px">${escapeHtml(n.text)}</textarea>
+    <div class="field-label">Foto</div>
+    <div id="en-photo-area">${photoHtml}</div>
+    <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+      <label class="btn-foto-lbl">
+        <input type="file" accept="image/*" class="file-input-hidden" id="en-foto-input" onchange="handleEditNotePhoto(event)">
+        📷 ${n.img?'Cambiar':'Añadir'} foto
+      </label>
+      ${n.img?'<button class="btn-cancel" onclick="removeEditNotePhoto()">Quitar foto</button>':''}
+    </div>
     <div class="modal-btns">
       <button class="btn-danger" onclick="deleteEditNote()">🗑 Borrar</button>
       <div class="btn-cancel" onclick="closeEditNoteModal()">Cancelar</div>
@@ -546,7 +581,38 @@ function openEditNoteModal(finca, id) {
   document.body.appendChild(ov);
   ov.onclick = e => { if (e.target === ov) closeEditNoteModal(); };
 }
-function closeEditNoteModal() { const m = document.getElementById('edit-note-modal'); if (m) m.remove(); editNoteCtx = null; }
+function handleEditNotePhoto(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (file.size > 1500000) { showToast('Foto demasiado grande (máx 1.5 MB)'); return; }
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const maxDim = 800;
+      let w = img.width, h = img.height;
+      if (w > maxDim || h > maxDim) {
+        if (w > h) { h = h * maxDim / w; w = maxDim; }
+        else { w = w * maxDim / h; h = maxDim; }
+      }
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
+      window._editNotePhotoData = dataUrl;
+      const area = document.getElementById('en-photo-area');
+      if (area) area.innerHTML = `<img class="modal-photo-preview" src="${dataUrl}">`;
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+function removeEditNotePhoto() {
+  window._editNotePhotoData = null;
+  const area = document.getElementById('en-photo-area');
+  if (area) area.innerHTML = '';
+}
+function closeEditNoteModal() { const m = document.getElementById('edit-note-modal'); if (m) m.remove(); editNoteCtx = null; window._editNotePhotoData = null; }
 function saveEditNote() {
   if (!editNoteCtx) return;
   const { finca, id } = editNoteCtx;
@@ -555,6 +621,7 @@ function saveEditNote() {
   const text = document.getElementById('en-text').value.trim();
   if (!text) { showToast('La nota no puede estar vacía'); return; }
   n.text = text;
+  n.img = window._editNotePhotoData || null;
   saveState();
   closeEditNoteModal();
   if (currentHouse === finca) renderHouse();
@@ -666,23 +733,27 @@ function buildWeek() {
       const cell = document.createElement('div');
       const isWknd = di >= 5;
       const content = getCellContent(date, hi);
-      if (isWknd && hi === 0) {
-        // primera fila de fin de semana muestra resumen y abre modal de wknd
-        cell.className = 'ccell c-wknd';
+      if (isWknd) {
+        // Buscar tareas de fin de semana que cubran esta hora hi
         const wt = wkndTasks[dk(date)] || [];
-        if (wt.length) {
-          const txt = wt[0].text + (wt.length > 1 ? ` (+${wt.length-1})` : '');
-          cell.innerHTML = `<div class="wknd-cell-text">${escapeHtml(txt)}</div>`;
-        } else {
+        const tasksAqui = wt.filter(t => {
+          if (t.fromHour === null || t.fromHour === undefined) return true; // todo el día
+          return hi >= t.fromHour && hi < t.toHour;
+        });
+        cell.className = 'ccell c-wknd';
+        if (tasksAqui.length) {
+          const first = tasksAqui[0];
+          const extra = tasksAqui.length > 1 ? ` (+${tasksAqui.length-1})` : '';
+          cell.innerHTML = `<div class="wknd-cell-text">${escapeHtml(first.text)}${extra}</div>`;
+        } else if (hi === 0 && wt.length === 0) {
           cell.innerHTML = `<div class="wknd-add-lbl">+ añadir</div>`;
+        } else {
+          cell.style.background = '#f6faf4';
+          cell.style.borderColor = '#daecd2';
         }
         cell.onclick = () => openWkndModal(dk(date), `${DLABELS[di]} ${date.getDate()} ${MS[date.getMonth()]}`);
-      } else if (isWknd) {
-        // resto de filas del fin de semana también abren wknd
-        cell.style.cssText = 'border-radius:4px;height:30px;background:#f6faf4;border:1px solid #daecd2;cursor:pointer;min-width:0;overflow:hidden';
-        cell.onclick = () => openWkndModal(dk(date), `${DLABELS[di]} ${date.getDate()} ${MS[date.getMonth()]}`);
       } else {
-        // L-V: casilla EDITABLE individualmente
+        // L-V
         if (content.type === 'finca') {
           const finca = content.value;
           cell.className = 'ccell ' + (FCLS[finca] || 'c-libre');
@@ -690,7 +761,6 @@ function buildWeek() {
           let inner = `<div class="cell-name">${escapeHtml(finca)}</div>`;
           if (tasks || notes) inner += `<div class="cell-badges">${tasks?`<div class="cb-t">!</div>`:''}${notes?`<div class="cb-n">*</div>`:''}</div>`;
           cell.innerHTML = inner;
-          // click corto: abre detalle de la finca; click largo (long press): editar casilla
           let pressTimer;
           cell.addEventListener('touchstart', e => {
             pressTimer = setTimeout(() => { pressTimer = 'fired'; openCellModal(date, hi); }, 500);
@@ -701,7 +771,6 @@ function buildWeek() {
             openHouse(finca);
           });
           cell.addEventListener('click', e => {
-            // En desktop, click = ir a la finca. Para editar: doble click o usar el botón pequeño
             if (e.detail === 2) openCellModal(date, hi);
           });
           cell.style.position = 'relative';
@@ -724,6 +793,28 @@ function buildWeek() {
     });
   });
   wrap.appendChild(grid); vv.appendChild(wrap);
+
+  // ===== SLIDER DE NAVEGACIÓN DE SEMANAS =====
+  // valor 0 = semana actual; -10 hacia atrás, +10 hacia delante
+  const sliderBox = document.createElement('div');
+  sliderBox.className = 'week-slider-box';
+  sliderBox.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;font-size:10px;color:var(--text-tertiary);margin-bottom:4px">
+      <span>← Semanas anteriores</span>
+      <span>Semanas próximas →</span>
+    </div>
+    <input type="range" id="week-slider" min="-26" max="26" value="${weekOff}" step="1" class="week-slider">
+    <div style="display:flex;justify-content:space-between;margin-top:6px;align-items:center">
+      <button class="mnav-btn" onclick="weekOff=0;buildWeek()" style="font-size:10px;padding:3px 8px">⌂ Hoy</button>
+      <span style="font-size:11px;color:var(--text-secondary)">Semana ${weekOff===0?'actual':(weekOff>0?'+'+weekOff:weekOff)}</span>
+    </div>`;
+  vv.appendChild(sliderBox);
+  const slider = document.getElementById('week-slider');
+  slider.addEventListener('input', e => {
+    weekOff = parseInt(e.target.value, 10);
+    // refrescar solo el título y las celdas sin recrear el slider (más fluido)
+    buildWeek();
+  });
 }
 
 // ===== EQUIPO (con Combustible dentro) =====
@@ -1018,8 +1109,10 @@ function renderNotas(vv, f) {
   if (!notas.length) { const el = document.createElement('div'); el.style.cssText = 'font-size:12px;color:var(--text-tertiary);padding:8px 0 10px'; el.textContent = 'Sin notas todavía.'; vv.appendChild(el); }
   notas.forEach(n => {
     const el = document.createElement('div'); el.className = 'nota-item';
+    const imgHtml = n.img ? `<img class="nota-photo" src="${n.img}" alt="Foto" onclick="openPhotoViewer('${n.img}')">` : '';
     el.innerHTML = `<div style="flex:1;min-width:0">
         <div class="nota-text" onclick="openEditNoteModal('${f}',${n.id})">${escapeHtml(n.text)}</div>
+        ${imgHtml}
         <div class="nota-meta">🕐 ${escapeHtml(n.date)}</div>
       </div>
       <div class="nota-actions">
@@ -1029,8 +1122,66 @@ function renderNotas(vv, f) {
     vv.appendChild(el);
   });
   const box = document.createElement('div'); box.className = 'add-box';
-  box.innerHTML = `<div class="field-label">Nueva nota</div><textarea id="nota-in" placeholder="Escribe en varias líneas..."></textarea><div class="box-btns"><button class="btn-save" onclick="saveNota('${f}')">Guardar</button></div>`;
+  box.innerHTML = `<div class="field-label">Nueva nota</div>
+    <textarea id="nota-in" placeholder="Escribe en varias líneas..."></textarea>
+    <div id="nota-photo-preview" style="margin-top:6px"></div>
+    <div class="box-btns">
+      <label class="btn-foto-lbl">
+        <input type="file" accept="image/*" class="file-input-hidden" id="nota-foto-input" onchange="handleNotaPhoto(event)">
+        📷 Foto
+      </label>
+      <button class="btn-save" onclick="saveNota('${f}')">Guardar</button>
+    </div>`;
   vv.appendChild(box);
+  window._notaPhotoData = null;
+}
+function handleNotaPhoto(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  // Limitar a 1.5 MB para no llenar localStorage
+  if (file.size > 1500000) {
+    showToast('Foto demasiado grande (máx 1.5 MB)');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = ev => {
+    // Redimensionar para que no ocupe mucho
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const maxDim = 800;
+      let w = img.width, h = img.height;
+      if (w > maxDim || h > maxDim) {
+        if (w > h) { h = h * maxDim / w; w = maxDim; }
+        else { w = w * maxDim / h; h = maxDim; }
+      }
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
+      window._notaPhotoData = dataUrl;
+      const prev = document.getElementById('nota-photo-preview');
+      if (prev) prev.innerHTML = `<div class="photo-preview-mini"><img src="${dataUrl}"><button class="remove-photo" onclick="removeNotaPhoto()">×</button></div>`;
+      showToast('📷 Foto añadida');
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+function removeNotaPhoto() {
+  window._notaPhotoData = null;
+  const prev = document.getElementById('nota-photo-preview');
+  if (prev) prev.innerHTML = '';
+  const inp = document.getElementById('nota-foto-input');
+  if (inp) inp.value = '';
+}
+function openPhotoViewer(src) {
+  const old = document.getElementById('photo-viewer'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.className = 'modal-overlay'; ov.id = 'photo-viewer';
+  ov.style.padding = '20px';
+  ov.innerHTML = `<div style="max-width:100%;max-height:100%;display:flex;align-items:center;justify-content:center"><img src="${src}" style="max-width:100%;max-height:90vh;border-radius:var(--radius-md)"></div>`;
+  document.body.appendChild(ov);
+  ov.onclick = () => ov.remove();
 }
 function quickDeleteNote(f, id) {
   if (!confirm('¿Borrar esta nota?')) return;
@@ -1044,7 +1195,9 @@ function saveNota(f) {
   const txt = document.getElementById('nota-in').value.trim();
   if (!txt) { showToast('Escribe algo'); return; }
   const d = new Date();
-  houseData[f].notas.unshift({ id: nextId++, text: txt, date: `${d.getDate()} ${MS[d.getMonth()]}`, img: null });
+  const img = window._notaPhotoData || null;
+  houseData[f].notas.unshift({ id: nextId++, text: txt, date: `${d.getDate()} ${MS[d.getMonth()]}`, img });
+  window._notaPhotoData = null;
   saveState();
   renderHouse();
   refreshCals();
