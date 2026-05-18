@@ -459,10 +459,12 @@ function openEditTaskModal(finca, id) {
   const t = houseData[finca].tareas.find(x => x.id === id);
   if (!t) return;
   editTaskCtx = { finca, id };
+  window._etPhotoData = t.img || null;
   const old = document.getElementById('edit-task-modal'); if (old) old.remove();
   const assigns = new Set(t.assigns || []);
   const ov = document.createElement('div');
   ov.className = 'modal-overlay'; ov.id = 'edit-task-modal';
+  const photoHtml = t.img ? `<img class="modal-photo-preview" src="${t.img}">` : '';
   ov.innerHTML = `<div class="modal-box">
     <div class="modal-title">✎ Editar tarea</div>
     <div class="field-label">Descripción</div>
@@ -477,6 +479,15 @@ function openEditTaskModal(finca, id) {
       <option value="normal" ${t.prio==='normal'?'selected':''}>Normal</option>
       <option value="urgent" ${t.prio==='urgent'?'selected':''}>Urgente</option>
     </select>
+    <div class="field-label">Foto</div>
+    <div id="et-photo-area">${photoHtml}</div>
+    <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+      <label class="btn-foto-lbl">
+        <input type="file" accept="image/*" class="file-input-hidden" id="et-foto-input" onchange="handleEditTaskPhoto(event)">
+        📷 ${t.img?'Cambiar':'Añadir'} foto
+      </label>
+      ${t.img?'<button class="btn-cancel" onclick="removeEditTaskPhoto()">Quitar foto</button>':''}
+    </div>
     <div class="modal-btns">
       <button class="btn-danger" onclick="deleteEditTask()">🗑 Borrar</button>
       <div class="btn-cancel" onclick="closeEditTaskModal()">Cancelar</div>
@@ -485,7 +496,6 @@ function openEditTaskModal(finca, id) {
   </div>`;
   document.body.appendChild(ov);
   ov.onclick = e => { if (e.target === ov) closeEditTaskModal(); };
-  // pintar pills de asignados
   const pillsEl = document.getElementById('et-pills');
   EMP_NAMES.forEach(name => {
     const isOn = assigns.has(name);
@@ -497,8 +507,38 @@ function openEditTaskModal(finca, id) {
     };
     pillsEl.appendChild(p);
   });
-  // Guardar referencia para luego
   window._etAssigns = assigns;
+}
+function handleEditTaskPhoto(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (file.size > 1500000) { showToast('Foto demasiado grande (máx 1.5 MB)'); return; }
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const maxDim = 800;
+      let w = img.width, h = img.height;
+      if (w > maxDim || h > maxDim) {
+        if (w > h) { h = h * maxDim / w; w = maxDim; }
+        else { w = w * maxDim / h; h = maxDim; }
+      }
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
+      window._etPhotoData = dataUrl;
+      const area = document.getElementById('et-photo-area');
+      if (area) area.innerHTML = `<img class="modal-photo-preview" src="${dataUrl}">`;
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+function removeEditTaskPhoto() {
+  window._etPhotoData = null;
+  const area = document.getElementById('et-photo-area');
+  if (area) area.innerHTML = '';
 }
 function openEditTaskModal_refreshPills(assigns) {
   const pillsEl = document.getElementById('et-pills');
@@ -512,7 +552,7 @@ function openEditTaskModal_refreshPills(assigns) {
     pillsEl.appendChild(p);
   });
 }
-function closeEditTaskModal() { const m = document.getElementById('edit-task-modal'); if (m) m.remove(); editTaskCtx = null; }
+function closeEditTaskModal() { const m = document.getElementById('edit-task-modal'); if (m) m.remove(); editTaskCtx = null; window._etPhotoData = null; }
 function saveEditTask() {
   if (!editTaskCtx) return;
   const { finca: oldFinca, id } = editTaskCtx;
@@ -526,14 +566,13 @@ function saveEditTask() {
   t.title = title;
   t.prio = prio;
   t.assigns = assigns;
+  t.img = window._etPhotoData || null;
   if (newFinca !== oldFinca) {
-    // mover
     houseData[oldFinca].tareas = houseData[oldFinca].tareas.filter(x => x.id !== id);
     houseData[newFinca].tareas.unshift(t);
   }
   saveState();
   closeEditTaskModal();
-  // Re-render lo que esté visible
   rerenderActive();
   showToast('✅ Actualizada');
 }
@@ -794,26 +833,29 @@ function buildWeek() {
   });
   wrap.appendChild(grid); vv.appendChild(wrap);
 
-  // ===== SLIDER DE NAVEGACIÓN DE SEMANAS =====
-  // valor 0 = semana actual; -10 hacia atrás, +10 hacia delante
+  // ===== SLIDER HORIZONTAL para mover el calendario de L a D =====
+  // Permite ver sábado/domingo sin tocar las casillas
   const sliderBox = document.createElement('div');
-  sliderBox.className = 'week-slider-box';
+  sliderBox.className = 'day-slider-box';
   sliderBox.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;font-size:10px;color:var(--text-tertiary);margin-bottom:4px">
-      <span>← Semanas anteriores</span>
-      <span>Semanas próximas →</span>
+    <div style="display:flex;align-items:center;justify-content:space-between;font-size:10px;color:var(--text-tertiary);margin-bottom:3px">
+      <span>← Lun</span>
+      <span>Dom →</span>
     </div>
-    <input type="range" id="week-slider" min="-26" max="26" value="${weekOff}" step="1" class="week-slider">
-    <div style="display:flex;justify-content:space-between;margin-top:6px;align-items:center">
-      <button class="mnav-btn" onclick="weekOff=0;buildWeek()" style="font-size:10px;padding:3px 8px">⌂ Hoy</button>
-      <span style="font-size:11px;color:var(--text-secondary)">Semana ${weekOff===0?'actual':(weekOff>0?'+'+weekOff:weekOff)}</span>
-    </div>`;
+    <input type="range" id="day-slider" min="0" max="100" value="0" step="1" class="day-slider">`;
   vv.appendChild(sliderBox);
-  const slider = document.getElementById('week-slider');
+  const slider = document.getElementById('day-slider');
   slider.addEventListener('input', e => {
-    weekOff = parseInt(e.target.value, 10);
-    // refrescar solo el título y las celdas sin recrear el slider (más fluido)
-    buildWeek();
+    const pct = parseInt(e.target.value, 10) / 100;
+    const maxScroll = wrap.scrollWidth - wrap.clientWidth;
+    wrap.scrollLeft = maxScroll * pct;
+  });
+  // Si el usuario hace scroll directamente, sincronizar el slider
+  wrap.addEventListener('scroll', () => {
+    const maxScroll = wrap.scrollWidth - wrap.clientWidth;
+    if (maxScroll <= 0) return;
+    const pct = Math.round((wrap.scrollLeft / maxScroll) * 100);
+    if (slider.value != pct) slider.value = pct;
   });
 }
 
@@ -1006,7 +1048,9 @@ function buildTareasLista(vv) {
       const assigns = (t.assigns || []);
       const aHtml = assigns.length ? `<span>👤 ${escapeHtml(assigns.join(', '))}</span>` : '';
       const tinfoClick = selectMode ? '' : `onclick="openEditTaskModal('${f}',${t.id})"`;
-      el.innerHTML = `${selectMode?selBoxHtml:checkHtml}<div class="tinfo" ${tinfoClick}><div class="ttitle${t.done?' done':''}">${escapeHtml(t.title)}</div><div class="tmeta"><span style="display:flex;align-items:center;gap:2px"><div style="width:7px;height:7px;border-radius:2px;background:${FCOL[f]}"></div>${escapeHtml(f)}</span>${aHtml}</div></div><span class="tbadge ${t.prio==='urgent'?'b-u':'b-n'}">${t.prio==='urgent'?'Urgente':'Normal'}</span>`;
+      const photoIcon = t.img ? '<span style="margin-left:4px">📷</span>' : '';
+      const thumbHtml = t.img ? `<img src="${t.img}" style="width:36px;height:36px;border-radius:4px;object-fit:cover;flex-shrink:0;cursor:pointer" onclick="event.stopPropagation();openPhotoViewer('${t.img}')">` : '';
+      el.innerHTML = `${selectMode?selBoxHtml:checkHtml}${thumbHtml}<div class="tinfo" ${tinfoClick}><div class="ttitle${t.done?' done':''}">${escapeHtml(t.title)}${photoIcon}</div><div class="tmeta"><span style="display:flex;align-items:center;gap:2px"><div style="width:7px;height:7px;border-radius:2px;background:${FCOL[f]}"></div>${escapeHtml(f)}</span>${aHtml}</div></div><span class="tbadge ${t.prio==='urgent'?'b-u':'b-n'}">${t.prio==='urgent'?'Urgente':'Normal'}</span>`;
       vv.appendChild(el);
     });
   });
@@ -1210,19 +1254,68 @@ function renderTareasFinca(vv, f) {
     const el = document.createElement('div'); el.className = 'task-item';
     const assigns = (t.assigns || []);
     const aHtml = assigns.length ? `👤 ${escapeHtml(assigns.join(', '))}` : '';
+    const photoIcon = t.img ? ' 📷' : '';
+    const thumbHtml = t.img ? `<img src="${t.img}" style="width:36px;height:36px;border-radius:4px;object-fit:cover;flex-shrink:0;cursor:pointer" onclick="event.stopPropagation();openPhotoViewer('${t.img}')">` : '';
     el.innerHTML = `<div class="tcheck${t.done?' done':''}" onclick="event.stopPropagation();toggleT('${f}',${t.id})">${t.done?'✓':''}</div>
+      ${thumbHtml}
       <div class="tinfo" onclick="openEditTaskModal('${f}',${t.id})">
-        <div class="ttitle${t.done?' done':''}">${escapeHtml(t.title)}</div>
+        <div class="ttitle${t.done?' done':''}">${escapeHtml(t.title)}${photoIcon}</div>
         <div class="tmeta">${aHtml}</div>
       </div>
       <span class="tbadge ${t.prio==='urgent'?'b-u':'b-n'}">${t.prio==='urgent'?'Urgente':'Normal'}</span>`;
     vv.appendChild(el);
   });
   const box = document.createElement('div'); box.className = 'add-box';
-  box.innerHTML = `<div class="field-label">Nueva tarea</div><input id="task-in" placeholder="Descripción..."><div class="assign-row"><span class="assign-label">Asignar a:</span><div class="emp-pills" id="house-pills"></div></div><div class="box-btns"><select id="task-prio"><option value="normal">Normal</option><option value="urgent">Urgente</option></select><button class="btn-save" onclick="addTarea('${f}')">Enviar →</button></div>`;
+  box.innerHTML = `<div class="field-label">Nueva tarea</div>
+    <input id="task-in" placeholder="Descripción...">
+    <div class="assign-row"><span class="assign-label">Asignar a:</span><div class="emp-pills" id="house-pills"></div></div>
+    <div id="task-photo-preview" style="margin-top:6px"></div>
+    <div class="box-btns">
+      <select id="task-prio"><option value="normal">Normal</option><option value="urgent">Urgente</option></select>
+      <label class="btn-foto-lbl">
+        <input type="file" accept="image/*" class="file-input-hidden" id="task-foto-input" onchange="handleNewTaskPhoto(event)">
+        📷 Foto
+      </label>
+      <button class="btn-save" onclick="addTarea('${f}')">Enviar →</button>
+    </div>`;
   vv.appendChild(box);
   newTaskAssignsHouse.clear();
   renderEmpPills('house-pills', newTaskAssignsHouse);
+  window._newTaskPhoto = null;
+}
+function handleNewTaskPhoto(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (file.size > 1500000) { showToast('Foto demasiado grande (máx 1.5 MB)'); return; }
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const maxDim = 800;
+      let w = img.width, h = img.height;
+      if (w > maxDim || h > maxDim) {
+        if (w > h) { h = h * maxDim / w; w = maxDim; }
+        else { w = w * maxDim / h; h = maxDim; }
+      }
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
+      window._newTaskPhoto = dataUrl;
+      const prev = document.getElementById('task-photo-preview');
+      if (prev) prev.innerHTML = `<div class="photo-preview-mini"><img src="${dataUrl}"><button class="remove-photo" onclick="removeNewTaskPhoto()">×</button></div>`;
+      showToast('📷 Foto añadida');
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+function removeNewTaskPhoto() {
+  window._newTaskPhoto = null;
+  const prev = document.getElementById('task-photo-preview');
+  if (prev) prev.innerHTML = '';
+  const inp = document.getElementById('task-foto-input');
+  if (inp) inp.value = '';
 }
 function toggleT(f, id) { const t = houseData[f].tareas.find(x => x.id === id); if (t) { t.done = !t.done; saveState(); renderHouse(); } }
 function addTarea(f) {
@@ -1230,8 +1323,10 @@ function addTarea(f) {
   const prio = document.getElementById('task-prio').value;
   if (!title) { showToast('Escribe una tarea'); return; }
   const assigns = Array.from(newTaskAssignsHouse);
-  houseData[f].tareas.unshift({ id: nextId++, title, prio, done: false, assigns });
+  const img = window._newTaskPhoto || null;
+  houseData[f].tareas.unshift({ id: nextId++, title, prio, done: false, assigns, img });
   newTaskAssignsHouse.clear();
+  window._newTaskPhoto = null;
   saveState();
   renderHouse();
   showToast(`✅ Enviada${assigns.length?' · '+assigns.length+' asignado'+(assigns.length>1?'s':''):''}`);
