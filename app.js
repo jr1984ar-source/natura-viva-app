@@ -28,7 +28,7 @@ const BASE = {
 
 // ===== ESTADO + PERSISTENCIA =====
 // Versión del esquema de datos. Si cambia, se borran los datos antiguos automáticamente.
-const DATA_VERSION = 3;
+const DATA_VERSION = 4;
 
 function loadState() {
   try {
@@ -84,7 +84,7 @@ FINCAS.forEach(f => {
 });
 
 let weekOff = 0, monthOff = 0, fuelMonthOff = 0;
-let currentHouse = null, currentTab = 'notas';
+let currentHouse = null, currentTab = 'tareas';
 let currentEmp = null, empTab = 'tareas', empCalView = 'mes', empMonthOff = 0, empWeekOff = 0;
 let taskFilter = 'all', selectMode = false;
 let selectedTasks = new Set();
@@ -132,7 +132,7 @@ function getCellContent(date, hi) {
   const key = `${dk(date)}_${hi}`;
   if (schedOver[key]) return schedOver[key]; // {type, value}
   const dow = (date.getDay() + 6) % 7;
-  if (dow >= 5) return { type: 'wknd' }; // fin de semana
+  if (dow >= 5) return { type: 'libre' }; // fin de semana sin override = libre, editable
   const finca = BASE[DKEYS[dow]][hi];
   if (finca) return { type: 'finca', value: finca };
   return { type: 'libre' };
@@ -454,6 +454,82 @@ function saveHours() {
 }
 
 // ===== MODAL EDITAR TAREA =====
+// ===== HELPER: SELECTOR DE SCHEDULE (todo el día / en esta finca / hora concreta) =====
+// scope values: 'finca' | 'day' | 'range'
+// schedule object: null | { day:'YYYY-MM-DD', from:null, to:null } | { day, from, to }
+function renderScheduleSelector(containerId, prefix, currentSchedule) {
+  const c = document.getElementById(containerId);
+  if (!c) return;
+  // Determinar scope actual
+  let curScope = 'finca';
+  let curDay = '';
+  let curFrom = 0, curTo = 1;
+  if (currentSchedule) {
+    curDay = currentSchedule.day || '';
+    if (currentSchedule.from === null || currentSchedule.from === undefined) {
+      curScope = 'day';
+    } else {
+      curScope = 'range';
+      curFrom = currentSchedule.from;
+      curTo = currentSchedule.to;
+    }
+  }
+  // Fecha por defecto si no hay (hoy)
+  if (!curDay) curDay = dk(new Date());
+
+  c.innerHTML = `
+    <div class="emp-pills" style="margin-bottom:10px">
+      <div class="emp-pill${curScope==='finca'?' on':''}" id="${prefix}-scope-finca" onclick="setSchedScope('${prefix}','finca')">🏠 En esta finca</div>
+      <div class="emp-pill${curScope==='day'?' on':''}" id="${prefix}-scope-day" onclick="setSchedScope('${prefix}','day')">🌞 Todo el día</div>
+      <div class="emp-pill${curScope==='range'?' on':''}" id="${prefix}-scope-range" onclick="setSchedScope('${prefix}','range')">⏰ Hora concreta</div>
+    </div>
+    <div id="${prefix}-date-section" style="display:${curScope==='finca'?'none':'block'};margin-bottom:10px">
+      <div class="field-label" style="margin-bottom:4px">Fecha</div>
+      <input type="date" id="${prefix}-sched-day" value="${curDay}" style="width:100%;border:1px solid var(--border);border-radius:var(--radius-md);padding:7px 9px;font-size:13px;background:var(--bg-secondary);color:var(--text-primary)">
+    </div>
+    <div id="${prefix}-range-section" style="display:${curScope==='range'?'block':'none'};margin-bottom:10px">
+      <div class="field-label" style="margin-bottom:4px">Desde / Hasta</div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <select id="${prefix}-sched-from" style="flex:1">${HOURS.map((h,i)=>`<option value="${i}" ${i===curFrom?'selected':''}>${h}</option>`).join('')}</select>
+        <span style="font-size:12px;color:var(--text-secondary)">a</span>
+        <select id="${prefix}-sched-to" style="flex:1">${HOURS.map((h,i)=>`<option value="${i+1}" ${(i+1)===curTo?'selected':''}>${i<7?HOURS[i+1]:'16:00'}</option>`).join('')}<option value="8" ${curTo===8?'selected':''}>16:00</option></select>
+      </div>
+    </div>`;
+  window['_schedScope_' + prefix] = curScope;
+}
+function setSchedScope(prefix, scope) {
+  window['_schedScope_' + prefix] = scope;
+  ['finca','day','range'].forEach(s => {
+    const el = document.getElementById(`${prefix}-scope-${s}`);
+    if (el) el.classList.toggle('on', s === scope);
+  });
+  document.getElementById(`${prefix}-date-section`).style.display = scope === 'finca' ? 'none' : 'block';
+  document.getElementById(`${prefix}-range-section`).style.display = scope === 'range' ? 'block' : 'none';
+}
+function readScheduleFromSelector(prefix) {
+  const scope = window['_schedScope_' + prefix] || 'finca';
+  if (scope === 'finca') return null;
+  const day = document.getElementById(`${prefix}-sched-day`).value;
+  if (!day) return null;
+  if (scope === 'day') {
+    return { day, from: null, to: null };
+  }
+  const from = parseInt(document.getElementById(`${prefix}-sched-from`).value, 10);
+  const to = parseInt(document.getElementById(`${prefix}-sched-to`).value, 10);
+  if (to <= from) return null;
+  return { day, from, to };
+}
+function scheduleLabel(s) {
+  if (!s) return '';
+  const [y,m,d] = s.day.split('-').map(Number);
+  const date = new Date(y, m-1, d);
+  const dow = (date.getDay()+6)%7;
+  const dayStr = `${DLABELS[dow]} ${d}/${m}`;
+  if (s.from === null || s.from === undefined) return `🌞 ${dayStr} · todo el día`;
+  const fromLabel = HOURS[s.from], toLabel = s.to<8?HOURS[s.to]:'16:00';
+  return `⏰ ${dayStr} · ${fromLabel}–${toLabel}`;
+}
+
 let editTaskCtx = null; // {finca, id}
 function openEditTaskModal(finca, id) {
   const t = houseData[finca].tareas.find(x => x.id === id);
@@ -479,6 +555,8 @@ function openEditTaskModal(finca, id) {
       <option value="normal" ${t.prio==='normal'?'selected':''}>Normal</option>
       <option value="urgent" ${t.prio==='urgent'?'selected':''}>Urgente</option>
     </select>
+    <div class="field-label">¿Cuándo se hace?</div>
+    <div id="et-schedule-container"></div>
     <div class="field-label">Foto</div>
     <div id="et-photo-area">${photoHtml}</div>
     <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
@@ -496,6 +574,7 @@ function openEditTaskModal(finca, id) {
   </div>`;
   document.body.appendChild(ov);
   ov.onclick = e => { if (e.target === ov) closeEditTaskModal(); };
+  renderScheduleSelector('et-schedule-container', 'et', t.schedule || null);
   const pillsEl = document.getElementById('et-pills');
   EMP_NAMES.forEach(name => {
     const isOn = assigns.has(name);
@@ -567,6 +646,7 @@ function saveEditTask() {
   t.prio = prio;
   t.assigns = assigns;
   t.img = window._etPhotoData || null;
+  t.schedule = readScheduleFromSelector('et');
   if (newFinca !== oldFinca) {
     houseData[oldFinca].tareas = houseData[oldFinca].tareas.filter(x => x.id !== id);
     houseData[newFinca].tareas.unshift(t);
@@ -593,7 +673,7 @@ function openEditNoteModal(finca, id) {
   const n = houseData[finca].notas.find(x => x.id === id);
   if (!n) return;
   editNoteCtx = { finca, id };
-  window._editNotePhotoData = n.img || null; // foto actual
+  window._editNotePhotoData = n.img || null;
   const old = document.getElementById('edit-note-modal'); if (old) old.remove();
   const ov = document.createElement('div');
   ov.className = 'modal-overlay'; ov.id = 'edit-note-modal';
@@ -602,6 +682,8 @@ function openEditNoteModal(finca, id) {
     <div class="modal-title">✎ Editar nota</div>
     <div class="field-label">Texto</div>
     <textarea id="en-text" style="min-height:100px">${escapeHtml(n.text)}</textarea>
+    <div class="field-label">¿Cuándo?</div>
+    <div id="en-schedule-container"></div>
     <div class="field-label">Foto</div>
     <div id="en-photo-area">${photoHtml}</div>
     <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
@@ -619,6 +701,7 @@ function openEditNoteModal(finca, id) {
   </div>`;
   document.body.appendChild(ov);
   ov.onclick = e => { if (e.target === ov) closeEditNoteModal(); };
+  renderScheduleSelector('en-schedule-container', 'en', n.schedule || null);
 }
 function handleEditNotePhoto(e) {
   const file = e.target.files[0];
@@ -661,6 +744,7 @@ function saveEditNote() {
   if (!text) { showToast('La nota no puede estar vacía'); return; }
   n.text = text;
   n.img = window._editNotePhotoData || null;
+  n.schedule = readScheduleFromSelector('en');
   saveState();
   closeEditNoteModal();
   if (currentHouse === finca) renderHouse();
@@ -770,63 +854,42 @@ function buildWeek() {
     DKEYS.forEach((day, di) => {
       const date = dates[di];
       const cell = document.createElement('div');
-      const isWknd = di >= 5;
       const content = getCellContent(date, hi);
-      if (isWknd) {
-        // Buscar tareas de fin de semana que cubran esta hora hi
-        const wt = wkndTasks[dk(date)] || [];
-        const tasksAqui = wt.filter(t => {
-          if (t.fromHour === null || t.fromHour === undefined) return true; // todo el día
-          return hi >= t.fromHour && hi < t.toHour;
+      // Todas las casillas L-D se comportan igual
+      if (content.type === 'finca') {
+        const finca = content.value;
+        cell.className = 'ccell ' + (FCLS[finca] || 'c-libre');
+        const tasks = hasTasks(finca), notes = hasNotes(finca);
+        let inner = `<div class="cell-name">${escapeHtml(finca)}</div>`;
+        if (tasks || notes) inner += `<div class="cell-badges">${tasks?`<div class="cb-t">!</div>`:''}${notes?`<div class="cb-n">*</div>`:''}</div>`;
+        cell.innerHTML = inner;
+        let pressTimer;
+        cell.addEventListener('touchstart', e => {
+          pressTimer = setTimeout(() => { pressTimer = 'fired'; openCellModal(date, hi); }, 500);
         });
-        cell.className = 'ccell c-wknd';
-        if (tasksAqui.length) {
-          const first = tasksAqui[0];
-          const extra = tasksAqui.length > 1 ? ` (+${tasksAqui.length-1})` : '';
-          cell.innerHTML = `<div class="wknd-cell-text">${escapeHtml(first.text)}${extra}</div>`;
-        } else if (hi === 0 && wt.length === 0) {
-          cell.innerHTML = `<div class="wknd-add-lbl">+ añadir</div>`;
-        } else {
-          cell.style.background = '#f6faf4';
-          cell.style.borderColor = '#daecd2';
-        }
-        cell.onclick = () => openWkndModal(dk(date), `${DLABELS[di]} ${date.getDate()} ${MS[date.getMonth()]}`);
+        cell.addEventListener('touchend', e => {
+          if (pressTimer === 'fired') { pressTimer = null; return; }
+          clearTimeout(pressTimer); pressTimer = null;
+          openHouse(finca);
+        });
+        cell.addEventListener('click', e => {
+          if (e.detail === 2) openCellModal(date, hi);
+        });
+        cell.style.position = 'relative';
+        const editBtn = document.createElement('div');
+        editBtn.textContent = '✎';
+        editBtn.style.cssText = 'position:absolute;top:0;left:1px;font-size:9px;opacity:.5;cursor:pointer;padding:1px 3px;line-height:1';
+        editBtn.onclick = (ev) => { ev.stopPropagation(); openCellModal(date, hi); };
+        cell.appendChild(editBtn);
+      } else if (content.type === 'custom') {
+        cell.className = 'ccell c-custom';
+        cell.innerHTML = `<div class="cell-name">${escapeHtml(content.value)}</div>`;
+        cell.onclick = () => openCellModal(date, hi);
       } else {
-        // L-V
-        if (content.type === 'finca') {
-          const finca = content.value;
-          cell.className = 'ccell ' + (FCLS[finca] || 'c-libre');
-          const tasks = hasTasks(finca), notes = hasNotes(finca);
-          let inner = `<div class="cell-name">${escapeHtml(finca)}</div>`;
-          if (tasks || notes) inner += `<div class="cell-badges">${tasks?`<div class="cb-t">!</div>`:''}${notes?`<div class="cb-n">*</div>`:''}</div>`;
-          cell.innerHTML = inner;
-          let pressTimer;
-          cell.addEventListener('touchstart', e => {
-            pressTimer = setTimeout(() => { pressTimer = 'fired'; openCellModal(date, hi); }, 500);
-          });
-          cell.addEventListener('touchend', e => {
-            if (pressTimer === 'fired') { pressTimer = null; return; }
-            clearTimeout(pressTimer); pressTimer = null;
-            openHouse(finca);
-          });
-          cell.addEventListener('click', e => {
-            if (e.detail === 2) openCellModal(date, hi);
-          });
-          cell.style.position = 'relative';
-          const editBtn = document.createElement('div');
-          editBtn.textContent = '✎';
-          editBtn.style.cssText = 'position:absolute;top:0;left:1px;font-size:9px;opacity:.5;cursor:pointer;padding:1px 3px;line-height:1';
-          editBtn.onclick = (ev) => { ev.stopPropagation(); openCellModal(date, hi); };
-          cell.appendChild(editBtn);
-        } else if (content.type === 'custom') {
-          cell.className = 'ccell c-custom';
-          cell.innerHTML = `<div class="cell-name">${escapeHtml(content.value)}</div>`;
-          cell.onclick = () => openCellModal(date, hi);
-        } else {
-          cell.className = 'ccell c-libre';
-          cell.innerHTML = `<div class="cell-name" style="opacity:.5">+ editar</div>`;
-          cell.onclick = () => openCellModal(date, hi);
-        }
+        // libre o wknd vacío
+        cell.className = 'ccell c-libre';
+        cell.innerHTML = `<div class="cell-name" style="opacity:.5">+ editar</div>`;
+        cell.onclick = () => openCellModal(date, hi);
       }
       grid.appendChild(cell);
     });
@@ -871,36 +934,169 @@ function buildEquipo() {
     vv.appendChild(el);
   });
 
+  // Combustible como tarjeta clicable
   const lbl2 = document.createElement('div'); lbl2.className = 'sec-lbl'; lbl2.textContent = '⛽ Combustible';
   vv.appendChild(lbl2);
-  const fuelBox = document.createElement('div');
-  fuelBox.style.cssText = 'background:var(--bg-primary);border:1px solid var(--border-soft);border-radius:var(--radius-lg);padding:11px';
-  vv.appendChild(fuelBox);
+
+  // Calcular total del mes actual
+  const now = new Date();
+  const Y = now.getFullYear(), M = now.getMonth();
+  let totalMes = 0, countMes = 0;
+  Object.entries(fuelDays).forEach(([key, val]) => {
+    const d = new Date(key);
+    if (d.getFullYear() === Y && d.getMonth() === M && val) {
+      const amount = typeof val === 'object' ? (val.amount || 0) : 0;
+      totalMes += amount;
+      countMes++;
+    }
+  });
+
+  const card = document.createElement('div');
+  card.className = 'emp-card';
+  card.innerHTML = `<div class="emp-av" style="background:#fff1cc;color:#7a4f10">⛽</div>
+    <div style="flex:1">
+      <div class="emp-name">Combustible</div>
+      <div class="emp-zone">${MONTHS[M]} · ${countMes} repostaje${countMes!==1?'s':''} · <strong>${totalMes.toFixed(2)} €</strong></div>
+    </div>
+    <div style="color:var(--text-tertiary);font-size:14px">›</div>`;
+  card.onclick = () => openCombustible();
+  vv.appendChild(card);
+}
+
+// ===== VISTA COMBUSTIBLE =====
+let fuelEntryDate = null;
+function openCombustible() {
+  ['semana','mes','tareas','equipo'].forEach(v => document.getElementById('view-'+v).style.display = 'none');
+  document.getElementById('view-casa').style.display = 'none';
+  document.getElementById('view-empleado').style.display = 'none';
+  document.getElementById('nav-tabs').style.display = 'none';
+  document.getElementById('view-combustible').style.display = 'block';
+  renderCombustible();
+}
+function renderCombustible() {
+  const vv = document.getElementById('view-combustible'); vv.innerHTML = '';
+  const back = document.createElement('div'); back.className = 'hv-back'; back.innerHTML = `‹ Volver`;
+  back.onclick = () => { document.getElementById('view-combustible').style.display = 'none'; document.getElementById('nav-tabs').style.display = 'flex'; document.getElementById('view-equipo').style.display = 'block'; buildEquipo(); };
+  vv.appendChild(back);
+
+  // Header
+  const hdr = document.createElement('div'); hdr.className = 'empd-header';
+  hdr.innerHTML = `<div class="empd-av" style="background:#fff1cc;color:#7a4f10;font-size:22px">⛽</div><div style="flex:1"><div class="empd-name">Combustible</div><div class="empd-zone">Toca un día para registrar repostaje</div></div>`;
+  vv.appendChild(hdr);
+
+  // Calendario mensual
   const now = new Date(new Date().getFullYear(), new Date().getMonth() + fuelMonthOff, 1);
-  const fhdr = document.createElement('div'); fhdr.className = 'fuel-month-nav';
-  fhdr.innerHTML = `<button class="mnav-btn" onclick="fuelMonthOff--;buildEquipo()">‹</button><div style="font-size:12px;font-weight:500">${MONTHS[now.getMonth()]} ${now.getFullYear()}</div><button class="mnav-btn" onclick="fuelMonthOff++;buildEquipo()">›</button>`;
-  fuelBox.appendChild(fhdr);
-  const fgrid = document.createElement('div'); fgrid.className = 'fuel-month-grid';
-  ['Lu','Ma','Mi','Ju','Vi','Sá','Do'].forEach(d => { const h = document.createElement('div'); h.className = 'fuel-day-hdr'; h.textContent = d; fgrid.appendChild(h); });
-  const first = new Date(now.getFullYear(), now.getMonth(), 1);
+  const Y = now.getFullYear(), M = now.getMonth();
+  const navHdr = document.createElement('div'); navHdr.className = 'fuel-month-nav';
+  navHdr.innerHTML = `<button class="mnav-btn" onclick="fuelMonthOff--;renderCombustible()">‹</button><div style="font-size:13px;font-weight:500">${MONTHS[M]} ${Y}</div><button class="mnav-btn" onclick="fuelMonthOff++;renderCombustible()">›</button>`;
+  vv.appendChild(navHdr);
+
+  const grid = document.createElement('div'); grid.className = 'fuel-month-grid';
+  ['Lu','Ma','Mi','Ju','Vi','Sá','Do'].forEach(d => { const h = document.createElement('div'); h.className = 'fuel-day-hdr'; h.textContent = d; grid.appendChild(h); });
+  const first = new Date(Y, M, 1);
   const startDow = (first.getDay() + 6) % 7;
-  const dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  for (let i = 0; i < startDow; i++) { const d = document.createElement('div'); d.className = 'fuel-day-cell other'; fgrid.appendChild(d); }
-  let fueled = 0;
+  const dim = new Date(Y, M + 1, 0).getDate();
+  for (let i = 0; i < startDow; i++) { const d = document.createElement('div'); d.className = 'fuel-day-cell other'; grid.appendChild(d); }
+  let totalMes = 0, countMes = 0, totalGasoil = 0, totalGasolina = 0;
   for (let day = 1; day <= dim; day++) {
-    const date = new Date(now.getFullYear(), now.getMonth(), day);
-    const key = dk(date); const isFueled = !!fuelDays[key]; if (isFueled) fueled++;
+    const date = new Date(Y, M, day);
+    const key = dk(date);
+    const val = fuelDays[key];
+    const isFueled = !!val;
     const cell = document.createElement('div'); cell.className = 'fuel-day-cell' + (isFueled ? ' fueled' : '');
-    cell.innerHTML = `<div class="fuel-day-num">${day}</div>${isFueled ? '<div style="font-size:13px">⛽</div>' : ''}`;
-    cell.onclick = () => { fuelDays[key] = !fuelDays[key]; saveState(); buildEquipo(); if (fuelDays[key]) showToast('⛽ Repostaje registrado'); };
-    fgrid.appendChild(cell);
+    let inner = `<div class="fuel-day-num">${day}</div>`;
+    if (isFueled) {
+      const amount = (typeof val === 'object') ? val.amount : 0;
+      const type = (typeof val === 'object') ? val.type : 'gasoil';
+      const icon = type === 'gasoil' ? '⛽' : '⛽';
+      inner += `<div style="font-size:11px;font-weight:600;color:#7a4f10;line-height:1">${amount}€</div>`;
+      inner += `<div style="font-size:8px;color:var(--text-tertiary);text-transform:uppercase;line-height:1.2">${type.slice(0,3)}</div>`;
+      totalMes += amount; countMes++;
+      if (type === 'gasoil') totalGasoil += amount; else totalGasolina += amount;
+    }
+    cell.innerHTML = inner;
+    cell.onclick = () => openFuelEntryModal(date);
+    grid.appendChild(cell);
   }
   const total = startDow + dim; const rem = total % 7 === 0 ? 0 : 7 - (total % 7);
-  for (let i = 0; i < rem; i++) { const d = document.createElement('div'); d.className = 'fuel-day-cell other'; fgrid.appendChild(d); }
-  fuelBox.appendChild(fgrid);
-  const sum = document.createElement('div'); sum.style.cssText = 'font-size:11px;color:var(--text-secondary);margin-top:8px';
-  sum.innerHTML = `⛽ Este mes: <strong>${fueled} repostaje${fueled !== 1 ? 's' : ''}</strong>`;
-  fuelBox.appendChild(sum);
+  for (let i = 0; i < rem; i++) { const d = document.createElement('div'); d.className = 'fuel-day-cell other'; grid.appendChild(d); }
+  vv.appendChild(grid);
+
+  // Resumen del mes
+  const sum = document.createElement('div'); sum.className = 'hr-summary';
+  sum.innerHTML = `<div class="hr-sum-title">Resumen ${MONTHS[M]} ${Y}</div>
+    <div class="hr-sum-row"><span>Repostajes</span><span>${countMes}</span></div>
+    <div class="hr-sum-row"><span>Gasoil</span><span>${totalGasoil.toFixed(2)} €</span></div>
+    <div class="hr-sum-row"><span>Gasolina</span><span>${totalGasolina.toFixed(2)} €</span></div>
+    <div class="hr-sum-row total"><span>Total mes</span><span>${totalMes.toFixed(2)} €</span></div>`;
+  vv.appendChild(sum);
+}
+function openFuelEntryModal(date) {
+  fuelEntryDate = date;
+  const key = dk(date);
+  const existing = fuelDays[key];
+  const curAmount = (existing && typeof existing === 'object') ? existing.amount : 50;
+  const curType = (existing && typeof existing === 'object') ? existing.type : 'gasoil';
+  const dow = (date.getDay() + 6) % 7;
+  const label = `${DLABELS[dow]} ${date.getDate()} ${MS[date.getMonth()]}`;
+
+  const old = document.getElementById('fuel-modal'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.className = 'modal-overlay'; ov.id = 'fuel-modal';
+  ov.innerHTML = `<div class="modal-box">
+    <div class="modal-title">⛽ ${escapeHtml(label)}</div>
+    <div class="field-label">Tipo</div>
+    <div class="emp-pills" style="margin-bottom:10px">
+      <div class="emp-pill${curType==='gasoil'?' on':''}" id="fuel-type-gasoil" onclick="setFuelType('gasoil')">⛽ Gasoil</div>
+      <div class="emp-pill${curType==='gasolina'?' on':''}" id="fuel-type-gasolina" onclick="setFuelType('gasolina')">⛽ Gasolina</div>
+    </div>
+    <div class="field-label">Cantidad (€)</div>
+    <input id="fuel-amount" type="number" inputmode="decimal" step="0.01" value="${curAmount}" placeholder="50">
+    <div class="quick-hours" style="margin-bottom:0">
+      <button class="q-hr-btn" onclick="setFuelAmount(20)">20€</button>
+      <button class="q-hr-btn" onclick="setFuelAmount(30)">30€</button>
+      <button class="q-hr-btn" onclick="setFuelAmount(40)">40€</button>
+      <button class="q-hr-btn" onclick="setFuelAmount(50)">50€</button>
+      <button class="q-hr-btn" onclick="setFuelAmount(60)">60€</button>
+      <button class="q-hr-btn" onclick="setFuelAmount(80)">80€</button>
+    </div>
+    <div style="height:10px"></div>
+    <div class="modal-btns">
+      ${existing ? `<button class="btn-danger" onclick="deleteFuelEntry()">🗑 Borrar</button>` : ''}
+      <div class="btn-cancel" onclick="closeFuelModal()">Cancelar</div>
+      <div class="btn-ok" onclick="saveFuelEntry()">Guardar</div>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.onclick = e => { if (e.target === ov) closeFuelModal(); };
+  window._fuelType = curType;
+  setTimeout(() => { const a = document.getElementById('fuel-amount'); if (a) a.select(); }, 60);
+}
+function setFuelType(t) {
+  window._fuelType = t;
+  document.getElementById('fuel-type-gasoil').classList.toggle('on', t === 'gasoil');
+  document.getElementById('fuel-type-gasolina').classList.toggle('on', t === 'gasolina');
+}
+function setFuelAmount(n) { const a = document.getElementById('fuel-amount'); if (a) a.value = n; }
+function closeFuelModal() { const m = document.getElementById('fuel-modal'); if (m) m.remove(); fuelEntryDate = null; }
+function saveFuelEntry() {
+  const amount = parseFloat(document.getElementById('fuel-amount').value);
+  if (isNaN(amount) || amount <= 0) { showToast('Cantidad no válida'); return; }
+  const key = dk(fuelEntryDate);
+  fuelDays[key] = { amount, type: window._fuelType || 'gasoil' };
+  saveState();
+  closeFuelModal();
+  renderCombustible();
+  showToast('⛽ Repostaje guardado');
+}
+function deleteFuelEntry() {
+  if (!confirm('¿Borrar este repostaje?')) return;
+  const key = dk(fuelEntryDate);
+  delete fuelDays[key];
+  saveState();
+  closeFuelModal();
+  renderCombustible();
+  showToast('🗑 Borrado');
 }
 
 // ===== DETALLE EMPLEADO =====
@@ -1119,7 +1315,7 @@ function addGlobalTask() {
 
 // ===== DETALLE CASA =====
 function openHouse(finca) {
-  currentHouse = finca; currentTab = 'notas';
+  currentHouse = finca; currentTab = 'tareas';
   ['semana','mes','tareas','equipo'].forEach(v => document.getElementById('view-'+v).style.display = 'none');
   document.getElementById('view-empleado').style.display = 'none';
   document.getElementById('nav-tabs').style.display = 'none';
@@ -1139,7 +1335,7 @@ function renderHouse() {
   hdr2.innerHTML = `<div class="hv-color" style="background:${col}"></div><div><div class="hv-name">${escapeHtml(f)}</div><div class="hv-time">${escapeHtml(slots.trim() || 'Sin horario fijo')}</div></div>`;
   vv.appendChild(hdr2);
   const tabs = document.createElement('div'); tabs.className = 'tabs2';
-  [{k:'notas',label:'📝 Notas y fotos'},{k:'tareas',label:'✓ Tareas'}].forEach(({k,label}) => {
+  [{k:'tareas',label:'✓ Tareas'},{k:'notas',label:'📝 Notas'}].forEach(({k,label}) => {
     const tab = document.createElement('div'); tab.className = 'tab2' + (currentTab===k?' active':'');
     const p = k==='tareas' ? houseData[f].tareas.filter(t=>!t.done).length : 0;
     tab.innerHTML = `${label}${p?` <span style="background:#FCEBEB;color:#A32D2D;font-size:9px;padding:1px 5px;border-radius:20px">${p}</span>`:''}`;
@@ -1154,9 +1350,12 @@ function renderNotas(vv, f) {
   notas.forEach(n => {
     const el = document.createElement('div'); el.className = 'nota-item';
     const imgHtml = n.img ? `<img class="nota-photo" src="${n.img}" alt="Foto" onclick="openPhotoViewer('${n.img}')">` : '';
+    const sLabel = scheduleLabel(n.schedule);
+    const sHtml = sLabel ? `<div style="font-size:10px;color:var(--green);margin-top:2px">${sLabel}</div>` : '';
     el.innerHTML = `<div style="flex:1;min-width:0">
         <div class="nota-text" onclick="openEditNoteModal('${f}',${n.id})">${escapeHtml(n.text)}</div>
         ${imgHtml}
+        ${sHtml}
         <div class="nota-meta">🕐 ${escapeHtml(n.date)}</div>
       </div>
       <div class="nota-actions">
@@ -1168,6 +1367,8 @@ function renderNotas(vv, f) {
   const box = document.createElement('div'); box.className = 'add-box';
   box.innerHTML = `<div class="field-label">Nueva nota</div>
     <textarea id="nota-in" placeholder="Escribe en varias líneas..."></textarea>
+    <div class="field-label">¿Cuándo?</div>
+    <div id="new-nota-schedule-container"></div>
     <div id="nota-photo-preview" style="margin-top:6px"></div>
     <div class="box-btns">
       <label class="btn-foto-lbl">
@@ -1177,6 +1378,7 @@ function renderNotas(vv, f) {
       <button class="btn-save" onclick="saveNota('${f}')">Guardar</button>
     </div>`;
   vv.appendChild(box);
+  renderScheduleSelector('new-nota-schedule-container', 'nn', null);
   window._notaPhotoData = null;
 }
 function handleNotaPhoto(e) {
@@ -1240,7 +1442,8 @@ function saveNota(f) {
   if (!txt) { showToast('Escribe algo'); return; }
   const d = new Date();
   const img = window._notaPhotoData || null;
-  houseData[f].notas.unshift({ id: nextId++, text: txt, date: `${d.getDate()} ${MS[d.getMonth()]}`, img });
+  const schedule = readScheduleFromSelector('nn');
+  houseData[f].notas.unshift({ id: nextId++, text: txt, date: `${d.getDate()} ${MS[d.getMonth()]}`, img, schedule });
   window._notaPhotoData = null;
   saveState();
   renderHouse();
@@ -1256,11 +1459,14 @@ function renderTareasFinca(vv, f) {
     const aHtml = assigns.length ? `👤 ${escapeHtml(assigns.join(', '))}` : '';
     const photoIcon = t.img ? ' 📷' : '';
     const thumbHtml = t.img ? `<img src="${t.img}" style="width:36px;height:36px;border-radius:4px;object-fit:cover;flex-shrink:0;cursor:pointer" onclick="event.stopPropagation();openPhotoViewer('${t.img}')">` : '';
+    const sLabel = scheduleLabel(t.schedule);
+    const sHtml = sLabel ? `<div style="font-size:10px;color:var(--green);margin-top:2px">${sLabel}</div>` : '';
     el.innerHTML = `<div class="tcheck${t.done?' done':''}" onclick="event.stopPropagation();toggleT('${f}',${t.id})">${t.done?'✓':''}</div>
       ${thumbHtml}
       <div class="tinfo" onclick="openEditTaskModal('${f}',${t.id})">
         <div class="ttitle${t.done?' done':''}">${escapeHtml(t.title)}${photoIcon}</div>
         <div class="tmeta">${aHtml}</div>
+        ${sHtml}
       </div>
       <span class="tbadge ${t.prio==='urgent'?'b-u':'b-n'}">${t.prio==='urgent'?'Urgente':'Normal'}</span>`;
     vv.appendChild(el);
@@ -1269,6 +1475,8 @@ function renderTareasFinca(vv, f) {
   box.innerHTML = `<div class="field-label">Nueva tarea</div>
     <input id="task-in" placeholder="Descripción...">
     <div class="assign-row"><span class="assign-label">Asignar a:</span><div class="emp-pills" id="house-pills"></div></div>
+    <div class="field-label">¿Cuándo se hace?</div>
+    <div id="new-task-schedule-container"></div>
     <div id="task-photo-preview" style="margin-top:6px"></div>
     <div class="box-btns">
       <select id="task-prio"><option value="normal">Normal</option><option value="urgent">Urgente</option></select>
@@ -1281,6 +1489,7 @@ function renderTareasFinca(vv, f) {
   vv.appendChild(box);
   newTaskAssignsHouse.clear();
   renderEmpPills('house-pills', newTaskAssignsHouse);
+  renderScheduleSelector('new-task-schedule-container', 'nt', null);
   window._newTaskPhoto = null;
 }
 function handleNewTaskPhoto(e) {
@@ -1324,7 +1533,8 @@ function addTarea(f) {
   if (!title) { showToast('Escribe una tarea'); return; }
   const assigns = Array.from(newTaskAssignsHouse);
   const img = window._newTaskPhoto || null;
-  houseData[f].tareas.unshift({ id: nextId++, title, prio, done: false, assigns, img });
+  const schedule = readScheduleFromSelector('nt');
+  houseData[f].tareas.unshift({ id: nextId++, title, prio, done: false, assigns, img, schedule });
   newTaskAssignsHouse.clear();
   window._newTaskPhoto = null;
   saveState();
