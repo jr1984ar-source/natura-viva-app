@@ -231,7 +231,13 @@ let tareasMode = 'lista';
 const wkBase = new Date(2026, 4, 11);
 
 // ===== UTILIDADES =====
-function dk(d) { return d.toISOString().split('T')[0]; }
+function dk(d) {
+  // Usar fecha LOCAL, no UTC, para evitar desplazamientos por zona horaria
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 function getWeekDates(off) { return DKEYS.map((_,i) => { const d = new Date(wkBase); d.setDate(d.getDate() + off*7 + i); return d; }); }
 function isToday(d) { const t = new Date(); return d.getDate() === t.getDate() && d.getMonth() === t.getMonth() && d.getFullYear() === t.getFullYear(); }
 function isWE(d) { return d.getDay() === 0 || d.getDay() === 6; }
@@ -646,15 +652,17 @@ function saveHours() {
 // ===== HELPER: SELECTOR DE SCHEDULE (todo el día / en esta finca / hora concreta) =====
 // scope values: 'finca' | 'day' | 'range'
 // schedule object: null | { day:'YYYY-MM-DD', from:null, to:null } | { day, from, to }
+// Schedule simplificado:
+//   null                              → "En esta finca" — aparece donde la finca está en horario base
+//   { day, from:null, to:null }       → todo el día (de la fecha 'day')
+//   { day, from, to }                 → hora concreta (de la fecha 'day')
+// La fecha 'day' siempre es el día en que se creó la tarea (currentHouseContextDate)
 function renderScheduleSelector(containerId, prefix, currentSchedule) {
   const c = document.getElementById(containerId);
   if (!c) return;
-  // Determinar scope actual
   let curScope = 'finca';
-  let curDay = '';
   let curFrom = 0, curTo = 1;
   if (currentSchedule) {
-    curDay = currentSchedule.day || '';
     if (currentSchedule.from === null || currentSchedule.from === undefined) {
       curScope = 'day';
     } else {
@@ -663,8 +671,14 @@ function renderScheduleSelector(containerId, prefix, currentSchedule) {
       curTo = currentSchedule.to;
     }
   }
-  // Fecha por defecto si no hay (hoy)
-  if (!curDay) curDay = dk(new Date());
+
+  // Etiqueta informativa con la fecha de contexto
+  let dateInfo = '';
+  if (currentHouseContextDate) {
+    const d = currentHouseContextDate;
+    const dow = (d.getDay() + 6) % 7;
+    dateInfo = `<div style="font-size:11px;color:var(--text-tertiary);margin-bottom:8px;background:var(--bg-secondary);padding:6px 10px;border-radius:var(--radius-md)">📅 Para el <strong>${DLABELS[dow]} ${d.getDate()}/${d.getMonth()+1}</strong></div>`;
+  }
 
   c.innerHTML = `
     <div class="emp-pills" style="margin-bottom:10px">
@@ -672,10 +686,7 @@ function renderScheduleSelector(containerId, prefix, currentSchedule) {
       <div class="emp-pill${curScope==='day'?' on':''}" id="${prefix}-scope-day" onclick="setSchedScope('${prefix}','day')">🌞 Todo el día</div>
       <div class="emp-pill${curScope==='range'?' on':''}" id="${prefix}-scope-range" onclick="setSchedScope('${prefix}','range')">⏰ Hora concreta</div>
     </div>
-    <div id="${prefix}-date-section" style="display:${curScope==='finca'?'none':'block'};margin-bottom:10px">
-      <div class="field-label" style="margin-bottom:4px">Fecha</div>
-      <input type="date" id="${prefix}-sched-day" value="${curDay}" style="width:100%;border:1px solid var(--border);border-radius:var(--radius-md);padding:7px 9px;font-size:13px;background:var(--bg-secondary);color:var(--text-primary)">
-    </div>
+    <div id="${prefix}-date-info" style="display:${curScope==='finca'?'none':'block'}">${dateInfo}</div>
     <div id="${prefix}-range-section" style="display:${curScope==='range'?'block':'none'};margin-bottom:10px">
       <div class="field-label" style="margin-bottom:4px">Desde / Hasta</div>
       <div style="display:flex;gap:6px;align-items:center">
@@ -692,14 +703,20 @@ function setSchedScope(prefix, scope) {
     const el = document.getElementById(`${prefix}-scope-${s}`);
     if (el) el.classList.toggle('on', s === scope);
   });
-  document.getElementById(`${prefix}-date-section`).style.display = scope === 'finca' ? 'none' : 'block';
+  const dInfo = document.getElementById(`${prefix}-date-info`);
+  if (dInfo) dInfo.style.display = scope === 'finca' ? 'none' : 'block';
   document.getElementById(`${prefix}-range-section`).style.display = scope === 'range' ? 'block' : 'none';
 }
 function readScheduleFromSelector(prefix) {
   const scope = window['_schedScope_' + prefix] || 'finca';
   if (scope === 'finca') return null;
-  const day = document.getElementById(`${prefix}-sched-day`).value;
-  if (!day) return null;
+  // La fecha viene del contexto donde se abrió la finca
+  let day;
+  if (currentHouseContextDate) {
+    day = dk(currentHouseContextDate);
+  } else {
+    day = dk(new Date());
+  }
   if (scope === 'day') {
     return { day, from: null, to: null };
   }
@@ -1059,7 +1076,7 @@ function buildWeek() {
         cell.addEventListener('touchend', e => {
           if (pressTimer === 'fired') { pressTimer = null; return; }
           clearTimeout(pressTimer); pressTimer = null;
-          openHouse(finca);
+          openHouse(finca, date);
         });
         cell.addEventListener('click', e => {
           if (e.detail === 2) openCellModal(date, hi);
@@ -1582,8 +1599,11 @@ function addGlobalTask() {
 }
 
 // ===== DETALLE CASA =====
-function openHouse(finca) {
+let currentHouseContextDate = null; // Fecha desde la que se abrió la finca
+
+function openHouse(finca, contextDate) {
   currentHouse = finca; currentTab = 'tareas';
+  currentHouseContextDate = contextDate || null;
   ['semana','mes','tareas','equipo'].forEach(v => document.getElementById('view-'+v).style.display = 'none');
   document.getElementById('view-empleado').style.display = 'none';
   document.getElementById('nav-tabs').style.display = 'none';
