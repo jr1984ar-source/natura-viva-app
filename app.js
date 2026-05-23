@@ -1544,17 +1544,10 @@ function buildTareasLista(vv) {
   });
   if (!any) { const el = document.createElement('div'); el.style.cssText = 'font-size:12px;color:var(--text-tertiary);padding:8px 0'; el.textContent = 'Sin tareas en esta vista.'; vv.appendChild(el); }
   const box = document.createElement('div'); box.className = 'add-task-box';
-  box.innerHTML = `<div class="field-label">Nueva tarea</div><input id="gt-title" placeholder="Descripción..."><div class="assign-row"><span class="assign-label">Asignar a:</span><div class="emp-pills" id="gt-pills"></div></div><div class="add-task-row"><select id="gt-finca"><option value="">— Finca —</option>${FINCAS.map(f=>`<option>${f}</option>`).join('')}<option value="__libre__">✏️ Texto libre...</option></select><select id="gt-prio"><option value="normal">Normal</option><option value="urgent">Urgente</option></select><button class="btn-send" onclick="addGlobalTask()">Enviar →</button></div><div id="gt-libre-row" style="display:none;margin-top:6px"><input id="gt-libre-text" placeholder="Escribe dónde es el trabajo..." style="width:100%"></div>`;
+  box.innerHTML = `<div class="field-label">Nueva tarea</div><input id="gt-title" placeholder="Descripción..."><div class="assign-row"><span class="assign-label">Asignar a:</span><div class="emp-pills" id="gt-pills"></div></div><div class="add-task-row"><select id="gt-finca"><option value="">— Finca —</option>${FINCAS.map(f=>`<option>${f}</option>`).join('')}</select><div class="emp-pill" id="gt-libre-pill" onclick="toggleGtLibre()" style="white-space:nowrap">✏️ Libre</div><select id="gt-prio"><option value="normal">Normal</option><option value="urgent">Urgente</option></select><button class="btn-send" onclick="addGlobalTask()">Enviar →</button></div><div id="gt-libre-row" style="display:none;margin-top:6px"><input id="gt-libre-text" placeholder="Escribe dónde es el trabajo..."></div>`;
   vv.appendChild(box);
   renderEmpPills('gt-pills', newTaskAssigns);
-  // Mostrar campo libre si se elige "Texto libre"
-  setTimeout(() => {
-    const gtFinca = document.getElementById('gt-finca');
-    if (gtFinca) gtFinca.addEventListener('change', () => {
-      const libreRow = document.getElementById('gt-libre-row');
-      if (libreRow) libreRow.style.display = gtFinca.value === '__libre__' ? 'block' : 'none';
-    });
-  }, 20);
+  window._gtLibreActive = false;
 }
 function buildTareasPorFinca(vv) {
   let any = false;
@@ -1618,32 +1611,37 @@ function bulkDelete() {
   });
   selectedTasks.clear(); selectMode = false; saveState(); buildTareas(); showToast('🗑 Eliminadas');
 }
+function toggleGtLibre() {
+  window._gtLibreActive = !window._gtLibreActive;
+  const pill = document.getElementById('gt-libre-pill');
+  const row = document.getElementById('gt-libre-row');
+  const sel = document.getElementById('gt-finca');
+  if (pill) pill.classList.toggle('on', window._gtLibreActive);
+  if (row) row.style.display = window._gtLibreActive ? 'block' : 'none';
+  if (sel) sel.disabled = window._gtLibreActive;
+  if (window._gtLibreActive && sel) sel.value = '';
+}
+
 function addGlobalTask() {
   const title = document.getElementById('gt-title').value.trim();
-  const fincaVal = document.getElementById('gt-finca').value;
   const prio = document.getElementById('gt-prio').value;
   if (!title) { showToast('Escribe una tarea'); return; }
-  if (!fincaVal) { showToast('Elige una finca o escribe una ubicación'); return; }
   const assigns = Array.from(newTaskAssigns);
-  if (fincaVal === '__libre__') {
+  if (window._gtLibreActive) {
     const libreText = (document.getElementById('gt-libre-text').value || '').trim();
     if (!libreText) { showToast('Escribe la ubicación'); return; }
-    // Guardamos en una finca especial "Libre" que no existe en FINCAS
-    // La tarea lleva un campo libreLocation
-    // Para no romper la estructura, la guardamos bajo la primera finca pero con tag libre
-    // Mejor: creamos un bucket "libre" en houseData
     if (!houseData['__libre__']) houseData['__libre__'] = { notas: [], tareas: [] };
     houseData['__libre__'].tareas.unshift({ id: nextId++, title, prio, done: false, assigns, libreLocation: libreText });
     newTaskAssigns.clear();
-    saveState();
-    buildTareas();
+    saveState(); buildTareas();
     showToast(`✅ Añadida en "${libreText}"`);
   } else {
-    houseData[fincaVal].tareas.unshift({ id: nextId++, title, prio, done: false, assigns });
+    const finca = document.getElementById('gt-finca').value;
+    if (!finca) { showToast('Elige una finca o activa Libre'); return; }
+    houseData[finca].tareas.unshift({ id: nextId++, title, prio, done: false, assigns });
     newTaskAssigns.clear();
-    saveState();
-    buildTareas();
-    showToast(`✅ Añadida en ${fincaVal}`);
+    saveState(); buildTareas();
+    showToast(`✅ Añadida en ${finca}`);
   }
 }
 
@@ -1895,7 +1893,7 @@ function switchMain(tab) {
   if (tab === 'mes') buildMonth();
   if (tab === 'tareas') buildTareas();
   if (tab === 'equipo') buildEquipo();
-  if (tab === 'compras') buildCompras();
+  if (tab === 'compras') { currentComprasFinca = null; buildCompras(); }
 }
 
 document.querySelectorAll('.nav-tab').forEach(tab => {
@@ -2011,12 +2009,12 @@ function renderAddCompraForm(vv) {
   box.innerHTML = `
     <div class="field-label">Nueva compra</div>
     <input id="nc-desc" placeholder="Descripción del material o compra...">
-    <div class="add-task-row" style="margin-top:6px">
-      <select id="nc-finca">
+    <div class="add-task-row" style="margin-top:6px;flex-wrap:wrap;gap:6px">
+      <select id="nc-finca" style="flex:1;min-width:120px">
         <option value="">— Finca —</option>
         ${FINCAS.map(f=>`<option value="${escapeHtml(f)}">${escapeHtml(f)}</option>`).join('')}
-        <option value="__libre__">✏️ Texto libre...</option>
       </select>
+      <div class="emp-pill" id="nc-libre-pill" onclick="toggleNcLibre()" style="white-space:nowrap">✏️ Libre</div>
     </div>
     <div id="nc-libre-row" style="display:none;margin-top:6px">
       <input id="nc-libre-text" placeholder="Escribe la ubicación o contexto...">
@@ -2031,20 +2029,14 @@ function renderAddCompraForm(vv) {
     </div>`;
   vv.appendChild(box);
   comprasPhotoData = null;
-  setTimeout(() => {
-    const sel = document.getElementById('nc-finca');
-    if (sel) sel.addEventListener('change', () => {
-      const libreRow = document.getElementById('nc-libre-row');
-      if (libreRow) libreRow.style.display = sel.value === '__libre__' ? 'block' : 'none';
-    });
-  }, 20);
+  window._ncLibreActive = false;
 }
 
 function buildComprasPorFinca(vv) {
   // Agrupar por finca
   const grupos = {};
   compras.forEach(c => {
-    const key = c.finca === '__libre__' ? '__libre__' : c.finca;
+    const key = c.finca === '__libre__' ? '__libre__' : (c.finca || '__libre__');
     if (!grupos[key]) grupos[key] = [];
     grupos[key].push(c);
   });
@@ -2052,9 +2044,10 @@ function buildComprasPorFinca(vv) {
   if (!Object.keys(grupos).length) {
     const el = document.createElement('div'); el.style.cssText='font-size:12px;color:var(--text-tertiary);padding:12px 0;text-align:center';
     el.textContent = 'No hay compras todavía.'; vv.appendChild(el);
+    return;
   }
 
-  // Primero las fincas conocidas, luego las libres
+  // Primero las fincas conocidas (en orden), luego libres
   const ordered = [...FINCAS.filter(f => grupos[f]), ...(grupos['__libre__'] ? ['__libre__'] : [])];
   ordered.forEach(key => {
     const items = grupos[key];
@@ -2062,35 +2055,129 @@ function buildComprasPorFinca(vv) {
     const locLabel = key === '__libre__' ? '✏️ Ubicación libre' : key;
     const locColor = key === '__libre__' ? '#aaa' : (FCOL[key] || '#ccc');
 
-    const grp = document.createElement('div'); grp.className = 'compras-group';
-    grp.innerHTML = `<div class="compras-group-header" style="border-left: 4px solid ${locColor}">
+    const card = document.createElement('div'); card.className = 'group-card';
+    card.innerHTML = `<div style="width:10px;height:36px;border-radius:3px;background:${locColor};flex-shrink:0"></div>
       <div style="flex:1">
         <div style="font-size:13px;font-weight:500">${escapeHtml(locLabel)}</div>
-        <div style="font-size:10px;color:var(--text-tertiary)">${items.length} compra${items.length!==1?'s':''}</div>
+        <div style="font-size:10px;color:var(--text-tertiary)">${items.length} compra${items.length!==1?'s':''} totales</div>
       </div>
       ${pending ? `<span class="notif-b">${pending} pendiente${pending>1?'s':''}</span>` : '<span style="font-size:10px;color:var(--text-tertiary)">✓ todo hecho</span>'}
-    </div>`;
-
-    items.forEach(c => {
-      const row = document.createElement('div'); row.className = 'task-global-item';
-      const thumbHtml = c.img ? `<img src="${c.img}" style="width:36px;height:36px;border-radius:4px;object-fit:cover;flex-shrink:0;cursor:pointer" onclick="openPhotoViewer('${c.img}')">` : '';
-      const subLabel = key === '__libre__' ? (c.libreText || '') : '';
-      row.innerHTML = `<div class="tcheck${c.done?' done':''}" onclick="event.stopPropagation();toggleCompra(${c.id})">${c.done?'✓':''}</div>
-        ${thumbHtml}
-        <div class="tinfo" onclick="openEditCompraModal(${c.id})">
-          <div class="ttitle${c.done?' done':''}">${escapeHtml(c.desc)}${c.img?' 📷':''}</div>
-          ${subLabel ? `<div style="font-size:10px;color:var(--text-secondary)">${escapeHtml(subLabel)}</div>` : ''}
-        </div>`;
-      grp.appendChild(row);
-    });
-
-    vv.appendChild(grp);
+      <span style="color:var(--text-tertiary);font-size:14px;margin-left:4px">›</span>`;
+    card.onclick = () => openComprasFinca(key);
+    vv.appendChild(card);
   });
 
-  // Botón para añadir
+  // Botón añadir
   const addBtn = document.createElement('div'); addBtn.className = 'add-task-box';
   addBtn.innerHTML = `<div style="text-align:center;padding:4px 0"><button class="btn-save" onclick="comprasMode='lista';buildCompras()">+ Nueva compra</button></div>`;
   vv.appendChild(addBtn);
+}
+
+// Estado para detalle de finca en compras
+let currentComprasFinca = null;
+
+function openComprasFinca(fincaKey) {
+  currentComprasFinca = fincaKey;
+  // Ocultar nav y mostrar vista detalle usando view-compras
+  document.getElementById('nav-tabs').style.display = 'none';
+  document.getElementById('view-compras').style.display = 'block';
+  renderComprasFincaDetail();
+}
+
+function renderComprasFincaDetail() {
+  const vv = document.getElementById('view-compras'); vv.innerHTML = '';
+  const key = currentComprasFinca;
+  const locLabel = key === '__libre__' ? '✏️ Ubicación libre' : key;
+  const locColor = key === '__libre__' ? '#aaa' : (FCOL[key] || '#ccc');
+
+  // Back
+  const back = document.createElement('div'); back.className = 'hv-back';
+  back.innerHTML = '‹ Volver';
+  back.onclick = () => {
+    currentComprasFinca = null;
+    document.getElementById('nav-tabs').style.display = 'flex';
+    buildCompras();
+  };
+  vv.appendChild(back);
+
+  // Header estilo finca
+  const hdr = document.createElement('div'); hdr.className = 'hv-header';
+  hdr.innerHTML = `<div class="hv-color" style="background:${locColor}"></div><div><div class="hv-name">${escapeHtml(locLabel)}</div></div>`;
+  vv.appendChild(hdr);
+
+  // Filtros
+  const fr = document.createElement('div'); fr.className = 'filter-row';
+  [['pending','Pendientes'],['done','Hechas'],['all','Todas']].forEach(([k,l]) => {
+    const b = document.createElement('div'); b.className = 'filter-btn' + (comprasFilter===k?' active':'');
+    b.textContent = l;
+    b.onclick = () => { comprasFilter = k; renderComprasFincaDetail(); };
+    fr.appendChild(b);
+  });
+  vv.appendChild(fr);
+
+  const items = compras.filter(c => {
+    const ck = c.finca === '__libre__' ? '__libre__' : (c.finca || '__libre__');
+    if (ck !== key) return false;
+    if (comprasFilter === 'pending') return !c.done;
+    if (comprasFilter === 'done') return c.done;
+    return true;
+  });
+
+  if (!items.length) {
+    const el = document.createElement('div'); el.style.cssText = 'font-size:12px;color:var(--text-tertiary);padding:12px 0';
+    el.textContent = 'Sin compras en esta vista.'; vv.appendChild(el);
+  }
+
+  items.forEach(c => {
+    const el = document.createElement('div'); el.className = 'task-global-item';
+    const thumbHtml = c.img ? `<img src="${c.img}" style="width:36px;height:36px;border-radius:4px;object-fit:cover;flex-shrink:0;cursor:pointer" onclick="event.stopPropagation();openPhotoViewer('${c.img}')">` : '';
+    const subLabel = key === '__libre__' ? (c.libreText || '') : '';
+    el.innerHTML = `<div class="tcheck${c.done?' done':''}" onclick="event.stopPropagation();toggleCompraDetail(${c.id})">${c.done?'✓':''}</div>
+      ${thumbHtml}
+      <div class="tinfo" onclick="openEditCompraModal(${c.id})">
+        <div class="ttitle${c.done?' done':''}">${escapeHtml(c.desc)}${c.img?' 📷':''}</div>
+        ${subLabel ? `<div style="font-size:10px;color:var(--text-secondary)">${escapeHtml(subLabel)}</div>` : ''}
+        ${c.fecha ? `<div style="font-size:10px;color:var(--text-tertiary)">${escapeHtml(c.fecha)}</div>` : ''}
+      </div>
+      <span class="tbadge b-n" style="background:${c.done?'#e8f5e9':'#fff3e0'};color:${c.done?'#2e7d32':'#e65100'}">${c.done?'✓ Hecha':'Pendiente'}</span>`;
+    vv.appendChild(el);
+  });
+
+  // Formulario añadir compra (preseleccionada la finca actual)
+  const box = document.createElement('div'); box.className = 'add-task-box';
+  const isLibre = key === '__libre__';
+  box.innerHTML = `
+    <div class="field-label">Nueva compra en ${escapeHtml(locLabel)}</div>
+    <input id="nc-desc" placeholder="Descripción del material o compra...">
+    ${isLibre ? `<div style="margin-top:6px"><input id="nc-libre-text" placeholder="Ubicación específica (opcional)..."></div>` : ''}
+    <div id="nc-photo-preview" style="margin-top:6px"></div>
+    <div class="box-btns" style="margin-top:8px">
+      <label class="btn-foto-lbl">
+        <input type="file" accept="image/*" class="file-input-hidden" id="nc-foto-input" onchange="handleCompraPhoto(event)">
+        📷 Foto/Factura
+      </label>
+      <button class="btn-send" onclick="addCompraEnFinca('${key}')">Enviar →</button>
+    </div>`;
+  vv.appendChild(box);
+  comprasPhotoData = null;
+}
+
+function toggleCompraDetail(id) {
+  const c = compras.find(x => x.id === id);
+  if (c) { c.done = !c.done; saveState(); renderComprasFincaDetail(); }
+}
+
+function addCompraEnFinca(fincaKey) {
+  const desc = (document.getElementById('nc-desc').value || '').trim();
+  if (!desc) { showToast('Escribe la descripción'); return; }
+  const d = new Date();
+  const fecha = `${d.getDate()} ${MS[d.getMonth()]} ${d.getFullYear()}`;
+  const libreText = fincaKey === '__libre__' ? ((document.getElementById('nc-libre-text') || {}).value || '').trim() : '';
+  compras.unshift({ id: nextId++, desc, finca: fincaKey, libreText, done: false, fecha, img: comprasPhotoData || null });
+  comprasPhotoData = null;
+  saveState();
+  renderComprasFincaDetail();
+  showToast('✅ Compra añadida');
 }
 
 function handleCompraPhoto(e) {
@@ -2129,18 +2216,29 @@ function removeCompraPhoto() {
   if (inp) inp.value = '';
 }
 
+function toggleNcLibre() {
+  window._ncLibreActive = !window._ncLibreActive;
+  const pill = document.getElementById('nc-libre-pill');
+  const row = document.getElementById('nc-libre-row');
+  const sel = document.getElementById('nc-finca');
+  if (pill) pill.classList.toggle('on', window._ncLibreActive);
+  if (row) row.style.display = window._ncLibreActive ? 'block' : 'none';
+  if (sel) sel.disabled = window._ncLibreActive;
+  if (window._ncLibreActive && sel) sel.value = '';
+}
+
 function addCompra() {
   const desc = (document.getElementById('nc-desc').value || '').trim();
-  const fincaVal = document.getElementById('nc-finca').value;
   if (!desc) { showToast('Escribe la descripción'); return; }
   const d = new Date();
   const fecha = `${d.getDate()} ${MS[d.getMonth()]} ${d.getFullYear()}`;
   const newC = { id: nextId++, desc, done: false, fecha, img: comprasPhotoData || null };
-  if (fincaVal === '__libre__') {
+  if (window._ncLibreActive) {
     const libre = (document.getElementById('nc-libre-text').value || '').trim();
     newC.finca = '__libre__';
     newC.libreText = libre;
   } else {
+    const fincaVal = document.getElementById('nc-finca').value;
     newC.finca = fincaVal || '__libre__';
     newC.libreText = '';
   }
@@ -2248,7 +2346,7 @@ function saveEditCompra() {
   }
   saveState();
   closeEditCompraModal();
-  buildCompras();
+  if (currentComprasFinca) renderComprasFincaDetail(); else buildCompras();
   showToast('✅ Actualizada');
 }
 function deleteCompra() {
@@ -2256,7 +2354,7 @@ function deleteCompra() {
   compras = compras.filter(x => x.id !== editCompraId);
   saveState();
   closeEditCompraModal();
-  buildCompras();
+  if (currentComprasFinca) renderComprasFincaDetail(); else buildCompras();
   showToast('🗑 Borrada');
 }
 
