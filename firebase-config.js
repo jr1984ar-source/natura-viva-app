@@ -1,30 +1,17 @@
-/* ===== Configuración de Firebase =====
- *
- * Para activar la sincronización entre móviles:
- * 1. Crea un proyecto en https://console.firebase.google.com
- * 2. Activa Realtime Database (modo bloqueado)
- * 3. En reglas pega:
- *    {
- *      "rules": {
- *        ".read": "true",
- *        ".write": "true"
- *      }
- *    }
- * 4. Registra una app web y copia el firebaseConfig
- * 5. Pega tu config aquí abajo y sube el archivo
- */
+/* ===== Configuración de Firebase — Natura Viva ===== */
 
 const FIREBASE_CONFIG = {
-  // REEMPLAZA ESTOS VALORES con los de tu proyecto:
-  apiKey: "REEMPLAZAR_API_KEY",
-  authDomain: "REEMPLAZAR.firebaseapp.com",
-  databaseURL: "https://REEMPLAZAR-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "REEMPLAZAR",
-  storageBucket: "REEMPLAZAR.appspot.com",
-  messagingSenderId: "REEMPLAZAR",
-  appId: "REEMPLAZAR"
+  apiKey: "AIzaSyCTC-3sMnBPP7dTUYKfHyNAinegL97z_bI",
+  authDomain: "natura-viva-ddc86.firebaseapp.com",
+  databaseURL: "https://natura-viva-ddc86-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "natura-viva-ddc86",
+  storageBucket: "natura-viva-ddc86.firebasestorage.app",
+  messagingSenderId: "100541506547",
+  appId: "1:100541506547:web:d84e06828742499d6b2886"
 };
 
-// Si la API key sigue siendo "REEMPLAZAR_API_KEY", se ejecuta en modo local sin sync
-window.FIREBASE_ENABLED = !FIREBASE_CONFIG.apiKey.startsWith("REEMPLAZAR");
+// VAPID key para push notifications
+window.NV_VAPID_KEY = "BMaLeEnPjaTQssWFIFtjSepHUTDkUIa6IHlmQRV4sZOkum-Id_q53fiokT-Qme2eHmPhmOE8kQG9f5oNU_3zwjY";
+
+window.FIREBASE_ENABLED = true;
 window.FIREBASE_CONFIG = FIREBASE_CONFIG;

@@ -52,6 +52,7 @@
     <div class="nav-tab" data-tab="tareas">✓ Tareas</div>
     <div class="nav-tab" data-tab="equipo">👥 Equipo</div>
     <div class="nav-tab" data-tab="compras">🛒 Compras</div>
+    <div class="nav-tab" data-tab="estancias">🏡 Estancias</div>
   </div>
   <div class="content">
     <div id="view-semana"></div>
@@ -59,6 +60,7 @@
     <div id="view-tareas" style="display:none"></div>
     <div id="view-equipo" style="display:none"></div>
     <div id="view-compras" style="display:none"></div>
+    <div id="view-estancias" style="display:none"></div>
     <div id="view-casa" style="display:none"></div>
     <div id="view-empleado" style="display:none"></div>
     <div id="view-combustible" style="display:none"></div>
@@ -71,10 +73,9 @@
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
+      // SW principal (cache + coordinación)
       navigator.serviceWorker.register('sw.js').then(reg => {
-        // Comprobar actualizaciones cada vez que se carga
         reg.update();
-        // Si se detecta versión nueva, recargar automáticamente
         reg.addEventListener('updatefound', () => {
           const newSW = reg.installing;
           if (newSW) {
@@ -87,6 +88,11 @@
           }
         });
       }).catch(err => console.log('SW falló:', err));
+
+      // SW de Firebase Messaging (para notificaciones push con app cerrada)
+      navigator.serviceWorker.register('firebase-messaging-sw.js')
+        .then(reg => console.log('[FCM SW] Registrado'))
+        .catch(err => console.warn('[FCM SW] No se pudo registrar:', err));
     });
   }
 </script>

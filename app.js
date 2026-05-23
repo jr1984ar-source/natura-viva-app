@@ -178,10 +178,11 @@ function loadState() {
       empHours: s.empHours || initEmpHours(),
       schedOver: s.schedOver || {},
       compras: s.compras || [],
+      estancias: s.estancias || [],
       nextId: s.nextId || 100
     };
   } catch(e) {
-    return { fuelDays:{}, wkndTasks:{}, houseData: initHouseData(), empHours: initEmpHours(), schedOver:{}, compras:[], nextId: 100 };
+    return { fuelDays:{}, wkndTasks:{}, houseData: initHouseData(), empHours: initEmpHours(), schedOver:{}, compras:[], estancias:[], nextId: 100 };
   }
 }
 function initHouseData() {
@@ -197,7 +198,7 @@ function initEmpHours() {
 }
 function saveState() {
   try {
-    localStorage.setItem('nv_state', JSON.stringify({ fuelDays, wkndTasks, houseData, empHours, schedOver, compras, nextId }));
+    localStorage.setItem('nv_state', JSON.stringify({ fuelDays, wkndTasks, houseData, empHours, schedOver, compras, estancias, nextId }));
   } catch(e) { console.log('No se pudo guardar:', e); }
   // Subir a la nube si Firebase está activo
   if (window.NV_SYNC && window.NV_SYNC.enabled) {
@@ -212,6 +213,7 @@ let houseData = _s.houseData;
 let empHours = _s.empHours;
 let schedOver = _s.schedOver;
 let compras = _s.compras;
+let estancias = _s.estancias;
 let nextId = _s.nextId;
 EMP_NAMES.forEach(n => { if (!empHours[n]) empHours[n] = {}; });
 // asegurar IDs en notas antiguas (compatibilidad)
@@ -765,6 +767,8 @@ function openEditTaskModal(finca, id) {
     </select>
     <div class="field-label">¿Cuándo se hace?</div>
     <div id="et-schedule-container"></div>
+    <div class="field-label" style="margin-top:8px">🔔 Aviso</div>
+    ${renderReminderFieldHTML('et', t.reminder || null)}
     <div class="field-label">Foto</div>
     <div id="et-photo-area">${photoHtml}</div>
     <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
@@ -850,14 +854,21 @@ function saveEditTask() {
   const prio = document.getElementById('et-prio').value;
   const assigns = Array.from(window._etAssigns || []);
   if (!title) { showToast('La descripción no puede estar vacía'); return; }
+  // Cancelar recordatorio anterior si lo había
+  if (t.reminder && t.reminder.reminderId) NV_SYNC.deleteReminder(t.reminder.reminderId);
   t.title = title;
   t.prio = prio;
   t.assigns = assigns;
   t.img = window._etPhotoData || null;
   t.schedule = readScheduleFromSelector('et');
+  t.reminder = readReminderFromField('et');
   if (newFinca !== oldFinca) {
     houseData[oldFinca].tareas = houseData[oldFinca].tareas.filter(x => x.id !== id);
     houseData[newFinca].tareas.unshift(t);
+  }
+  // Programar nuevo recordatorio
+  if (t.reminder && t.reminder.fireAt) {
+    scheduleTaskReminder(t, newFinca !== oldFinca ? newFinca : oldFinca);
   }
   saveState();
   closeEditTaskModal();
@@ -868,6 +879,8 @@ function deleteEditTask() {
   if (!editTaskCtx) return;
   if (!confirm('¿Borrar esta tarea?')) return;
   const { finca, id } = editTaskCtx;
+  const t = houseData[finca].tareas.find(x => x.id === id);
+  if (t && t.reminder && t.reminder.reminderId) NV_SYNC.deleteReminder(t.reminder.reminderId);
   houseData[finca].tareas = houseData[finca].tareas.filter(x => x.id !== id);
   saveState();
   closeEditTaskModal();
@@ -1011,7 +1024,11 @@ function buildMonth() {
       }
       const uniq = [...fincasUnique];
       uniq.slice(0, 3).forEach(f => {
-        let b = ''; if (hasTasks(f)) b += `<span class="pip-t">!</span>`; if (hasNotes(f)) b += `<span class="pip-n">*</span>`;
+        let b = '';
+        if (hasTasks(f)) b += `<span class="pip-t">!</span>`;
+        if (hasNotes(f)) b += `<span class="pip-n">*</span>`;
+        if (hasEstanciaEnFecha(f, date)) b += `<span class="pip-e">🏠</span>`;
+        if (hasComprasPendientes(f)) b += `<span class="pip-c">🛒</span>`;
         html += `<div class="md-pip" style="background:${FCOL[f]};color:#333"><span style="flex:1;overflow:hidden;text-overflow:ellipsis">${escapeHtml(f)}</span>${b}</div>`;
       });
       if (uniq.length > 3) html += `<div style="font-size:8px;color:var(--text-tertiary)">+${uniq.length - 3}</div>`;
@@ -1068,8 +1085,15 @@ function buildWeek() {
         const finca = content.value;
         cell.className = 'ccell ' + (FCLS[finca] || 'c-libre');
         const tasks = hasTasksInCell(finca, date, hi), notes = hasNotesInCell(finca, date, hi);
+        const hasCom = hasComprasPendientes(finca);
+        const hasEst = hasEstanciaEnFecha(finca, date);
         let inner = `<div class="cell-name">${escapeHtml(finca)}</div>`;
-        if (tasks || notes) inner += `<div class="cell-badges">${tasks?`<div class="cb-t">!</div>`:''}${notes?`<div class="cb-n">*</div>`:''}</div>`;
+        const badges = [];
+        if (tasks) badges.push(`<div class="cb-t">!</div>`);
+        if (notes) badges.push(`<div class="cb-n">*</div>`);
+        if (hasEst) badges.push(`<div class="cb-e">🏠</div>`);
+        if (hasCom) badges.push(`<div class="cb-c">🛒</div>`);
+        if (badges.length) inner += `<div class="cell-badges">${badges.join('')}</div>`;
         cell.innerHTML = inner;
         let pressTimer;
         cell.addEventListener('touchstart', e => {
@@ -1543,8 +1567,14 @@ function buildTareasLista(vv) {
     });
   });
   if (!any) { const el = document.createElement('div'); el.style.cssText = 'font-size:12px;color:var(--text-tertiary);padding:8px 0'; el.textContent = 'Sin tareas en esta vista.'; vv.appendChild(el); }
-  const box = document.createElement('div'); box.className = 'add-task-box';
+  const box = document.createElement('div'); box.className = 'add-task-box'; box.id = 'add-task-form'; box.style.display = 'none';
   box.innerHTML = `<div class="field-label">Nueva tarea</div><input id="gt-title" placeholder="Descripción..."><div class="assign-row"><span class="assign-label">Asignar a:</span><div class="emp-pills" id="gt-pills"></div></div><div class="add-task-row"><select id="gt-finca"><option value="">— Finca —</option>${FINCAS.map(f=>`<option>${f}</option>`).join('')}</select><div class="emp-pill" id="gt-libre-pill" onclick="toggleGtLibre()" style="white-space:nowrap">✏️ Libre</div><select id="gt-prio"><option value="normal">Normal</option><option value="urgent">Urgente</option></select><button class="btn-send" onclick="addGlobalTask()">Enviar →</button></div><div id="gt-libre-row" style="display:none;margin-top:6px"><input id="gt-libre-text" placeholder="Escribe dónde es el trabajo..."></div>`;
+
+  const toggleBtn = document.createElement('div');
+  toggleBtn.className = 'add-toggle-btn'; toggleBtn.id = 'add-task-toggle-btn';
+  toggleBtn.textContent = '+ Nueva tarea';
+  toggleBtn.onclick = toggleAddTaskForm;
+  vv.appendChild(toggleBtn);
   vv.appendChild(box);
   renderEmpPills('gt-pills', newTaskAssigns);
   window._gtLibreActive = false;
@@ -1878,7 +1908,7 @@ function addTarea(f) {
 }
 
 // ===== NAVEGACIÓN =====
-const TABS = ['semana','mes','tareas','equipo','compras'];
+const TABS = ['semana','mes','tareas','equipo','compras','estancias'];
 function switchMain(tab) {
   TABS.forEach((t, i) => {
     document.getElementById('view-' + t).style.display = 'none';
@@ -1894,6 +1924,7 @@ function switchMain(tab) {
   if (tab === 'tareas') buildTareas();
   if (tab === 'equipo') buildEquipo();
   if (tab === 'compras') { currentComprasFinca = null; buildCompras(); }
+  if (tab === 'estancias') buildEstancias();
 }
 
 document.querySelectorAll('.nav-tab').forEach(tab => {
@@ -2000,8 +2031,38 @@ function buildComprasLista(vv) {
     vv.appendChild(el);
   });
 
-  // Formulario nueva compra
-  renderAddCompraForm(vv);
+  // Formulario nueva compra — colapsable
+  const toggleBtn = document.createElement('div');
+  toggleBtn.className = 'add-toggle-btn'; toggleBtn.id = 'add-compra-toggle-btn';
+  toggleBtn.textContent = '+ Nueva compra';
+  toggleBtn.onclick = toggleAddCompraForm;
+  vv.appendChild(toggleBtn);
+
+  const box = document.createElement('div'); box.id = 'add-compra-form'; box.className = 'add-task-box'; box.style.display = 'none';
+  box.innerHTML = `
+    <div class="field-label">Nueva compra</div>
+    <input id="nc-desc" placeholder="Descripción del material o compra...">
+    <div class="add-task-row" style="margin-top:6px;flex-wrap:wrap;gap:6px">
+      <select id="nc-finca" style="flex:1;min-width:120px">
+        <option value="">— Finca —</option>
+        ${FINCAS.map(f=>`<option value="${escapeHtml(f)}">${escapeHtml(f)}</option>`).join('')}
+      </select>
+      <div class="emp-pill" id="nc-libre-pill" onclick="toggleNcLibre()" style="white-space:nowrap">✏️ Libre</div>
+    </div>
+    <div id="nc-libre-row" style="display:none;margin-top:6px">
+      <input id="nc-libre-text" placeholder="Escribe la ubicación o contexto...">
+    </div>
+    <div id="nc-photo-preview" style="margin-top:6px"></div>
+    <div class="box-btns" style="margin-top:8px">
+      <label class="btn-foto-lbl">
+        <input type="file" accept="image/*" class="file-input-hidden" id="nc-foto-input" onchange="handleCompraPhoto(event)">
+        📷 Foto/Factura
+      </label>
+      <button class="btn-send" onclick="addCompra()">Enviar →</button>
+    </div>`;
+  vv.appendChild(box);
+  comprasPhotoData = null;
+  window._ncLibreActive = false;
 }
 
 function renderAddCompraForm(vv) {
@@ -2418,4 +2479,573 @@ async function exportarFacturasPDF() {
     showToast(`✅ ${conFoto.length} factura${conFoto.length>1?'s':''} — usa Imprimir para guardar PDF`);
   }
   setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// ============================================================
+// ===== HELPERS CALENDARIOS — ESTANCIAS Y COMPRAS =====
+// ============================================================
+
+function hasComprasPendientes(finca) {
+  return compras.some(c => !c.done && c.finca === finca);
+}
+
+function hasEstanciaEnFecha(finca, date) {
+  const d = dk(date);
+  return estancias.some(e => e.finca === finca && e.entrada <= d && e.salida > d);
+}
+
+function getEstanciasEnFecha(finca, date) {
+  const d = dk(date);
+  return estancias.filter(e => e.finca === finca && e.entrada <= d && e.salida > d);
+}
+
+// ============================================================
+// ===== FORMULARIOS COLAPSABLES: TAREAS Y COMPRAS =====
+// ============================================================
+// El buildTareasLista y buildComprasLista ya tienen sus botones
+// Aquí están las funciones toggle
+
+function toggleAddTaskForm() {
+  const form = document.getElementById('add-task-form');
+  const btn = document.getElementById('add-task-toggle-btn');
+  if (!form) return;
+  const open = form.style.display !== 'none';
+  form.style.display = open ? 'none' : 'block';
+  if (btn) btn.textContent = open ? '+ Nueva tarea' : '− Cerrar';
+}
+
+function toggleAddCompraForm() {
+  const form = document.getElementById('add-compra-form');
+  const btn = document.getElementById('add-compra-toggle-btn');
+  if (!form) return;
+  const open = form.style.display !== 'none';
+  form.style.display = open ? 'none' : 'block';
+  if (btn) btn.textContent = open ? '+ Nueva compra' : '− Cerrar';
+}
+
+// ============================================================
+// ===== ESTANCIAS =====
+// ============================================================
+// Estructura: estancias = [{id, finca, entrada:'YYYY-MM-DD', salida:'YYYY-MM-DD', notas, cliente}]
+
+let estanciasSubTab = 'todas'; // 'todas' | 'finca' | 'calendario'
+let estanciasCalOff = 0; // offset de mes para calendario de estancias
+
+function buildEstancias() {
+  const vv = document.getElementById('view-estancias'); vv.innerHTML = '';
+
+  // Subpestañas
+  const tabs = document.createElement('div'); tabs.className = 'tabs2';
+  [{k:'todas',l:'📋 Todas'},{k:'finca',l:'🏠 Por finca'},{k:'calendario',l:'📅 Calendario'}].forEach(({k,l}) => {
+    const t = document.createElement('div'); t.className = 'tab2' + (estanciasSubTab===k?' active':'');
+    t.textContent = l;
+    t.onclick = () => { estanciasSubTab = k; buildEstancias(); };
+    tabs.appendChild(t);
+  });
+  vv.appendChild(tabs);
+
+  if (estanciasSubTab === 'todas') buildEstanciasTodas(vv);
+  else if (estanciasSubTab === 'finca') buildEstanciasPorFinca(vv);
+  else buildEstanciasCalendario(vv);
+}
+
+function buildEstanciasTodas(vv) {
+  const ahora = dk(new Date());
+  // Ordenar: primero activas, luego futuras, luego pasadas
+  const sorted = [...estancias].sort((a, b) => {
+    const aActiva = a.entrada <= ahora && a.salida > ahora;
+    const bActiva = b.entrada <= ahora && b.salida > ahora;
+    if (aActiva && !bActiva) return -1;
+    if (!aActiva && bActiva) return 1;
+    return a.entrada.localeCompare(b.entrada);
+  });
+
+  if (!sorted.length) {
+    const el = document.createElement('div'); el.style.cssText = 'font-size:12px;color:var(--text-tertiary);padding:16px 0;text-align:center';
+    el.textContent = 'Sin estancias registradas.'; vv.appendChild(el);
+  }
+
+  sorted.forEach(e => {
+    const el = renderEstanciaCard(e, ahora);
+    vv.appendChild(el);
+  });
+
+  renderAddEstanciaForm(vv);
+}
+
+function buildEstanciasPorFinca(vv) {
+  const ahora = dk(new Date());
+  FINCAS.forEach(f => {
+    const items = estancias.filter(e => e.finca === f);
+    if (!items.length) return;
+    const activas = items.filter(e => e.entrada <= ahora && e.salida > ahora).length;
+    const card = document.createElement('div'); card.className = 'group-card';
+    card.innerHTML = `<div style="width:10px;height:36px;border-radius:3px;background:${FCOL[f]||'#ccc'};flex-shrink:0"></div>
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:500">${escapeHtml(f)}</div>
+        <div style="font-size:10px;color:var(--text-tertiary)">${items.length} estancia${items.length!==1?'s':''}</div>
+      </div>
+      ${activas ? `<span class="notif-b" style="background:#fff8e1;color:#e65100">🏠 Ocupada</span>` : ''}
+      <span style="color:var(--text-tertiary);font-size:14px;margin-left:4px">›</span>`;
+    card.onclick = () => openEstanciasFinca(f);
+    vv.appendChild(card);
+  });
+
+  const addBtn = document.createElement('div'); addBtn.className = 'add-task-box';
+  addBtn.innerHTML = `<div style="text-align:center;padding:4px 0"><button class="btn-save" onclick="estanciasSubTab='todas';buildEstancias()">+ Nueva estancia</button></div>`;
+  vv.appendChild(addBtn);
+}
+
+let currentEstanciasFinca = null;
+function openEstanciasFinca(f) {
+  currentEstanciasFinca = f;
+  document.getElementById('nav-tabs').style.display = 'none';
+  renderEstanciasFincaDetail();
+}
+
+function renderEstanciasFincaDetail() {
+  const vv = document.getElementById('view-estancias'); vv.innerHTML = '';
+  const f = currentEstanciasFinca;
+  const ahora = dk(new Date());
+
+  const back = document.createElement('div'); back.className = 'hv-back'; back.innerHTML = '‹ Volver';
+  back.onclick = () => { currentEstanciasFinca = null; document.getElementById('nav-tabs').style.display = 'flex'; buildEstancias(); };
+  vv.appendChild(back);
+
+  const hdr = document.createElement('div'); hdr.className = 'hv-header';
+  hdr.innerHTML = `<div class="hv-color" style="background:${FCOL[f]||'#ccc'}"></div><div><div class="hv-name">${escapeHtml(f)}</div></div>`;
+  vv.appendChild(hdr);
+
+  const items = [...estancias.filter(e => e.finca === f)].sort((a,b) => b.entrada.localeCompare(a.entrada));
+  if (!items.length) {
+    const el = document.createElement('div'); el.style.cssText = 'font-size:12px;color:var(--text-tertiary);padding:12px 0';
+    el.textContent = 'Sin estancias en esta finca.'; vv.appendChild(el);
+  }
+  items.forEach(e => { vv.appendChild(renderEstanciaCard(e, ahora)); });
+  renderAddEstanciaForm(vv, f);
+}
+
+function buildEstanciasCalendario(vv) {
+  const now = new Date(new Date().getFullYear(), new Date().getMonth() + estanciasCalOff, 1);
+  const Y = now.getFullYear(), M = now.getMonth();
+  const ahora = dk(new Date());
+
+  const nav = document.createElement('div'); nav.className = 'month-nav';
+  nav.innerHTML = `<button class="mnav-btn" onclick="estanciasCalOff--;buildEstancias()">‹</button><div class="month-title">${MONTHS[M]} ${Y}</div><button class="mnav-btn" onclick="estanciasCalOff++;buildEstancias()">›</button>`;
+  vv.appendChild(nav);
+
+  const grid = document.createElement('div'); grid.className = 'month-grid';
+  ['Lu','Ma','Mi','Ju','Vi','Sá','Do'].forEach(d => { const h = document.createElement('div'); h.className = 'day-hdr'; h.textContent = d; grid.appendChild(h); });
+
+  const first = new Date(Y, M, 1);
+  const startDow = (first.getDay() + 6) % 7;
+  const dim = new Date(Y, M + 1, 0).getDate();
+  const prev = new Date(Y, M, 0).getDate();
+
+  for (let i = 0; i < startDow; i++) { const d = document.createElement('div'); d.className = 'month-day other-month'; d.innerHTML = `<div class="md-num">${prev - startDow + 1 + i}</div>`; grid.appendChild(d); }
+
+  for (let day = 1; day <= dim; day++) {
+    const date = new Date(Y, M, day);
+    const dow = (date.getDay() + 6) % 7;
+    const weekend = dow >= 5;
+    const td = isToday(date);
+    const dStr = dk(date);
+    const cell = document.createElement('div');
+    cell.className = 'month-day' + (td?' today-day':'') + (weekend?' weekend-day':'');
+    let html = `<div class="md-num${td?' today-num':''}">${day}</div>`;
+
+    // Estancias activas ese día
+    const activas = estancias.filter(e => e.entrada <= dStr && e.salida > dStr);
+    activas.slice(0, 3).forEach(e => {
+      const col = FCOL[e.finca] || '#ffe082';
+      html += `<div class="md-pip" style="background:${col};color:#333;font-size:8px">
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis">${escapeHtml(e.finca)}</span>
+        <span style="font-size:7px">🏠</span>
+      </div>`;
+    });
+    if (activas.length > 3) html += `<div style="font-size:7px;color:var(--text-tertiary)">+${activas.length-3}</div>`;
+
+    cell.innerHTML = html;
+    cell.onclick = () => openEstanciaDayModal(dStr, activas);
+    grid.appendChild(cell);
+  }
+
+  const total = startDow + dim; const rem = total % 7 === 0 ? 0 : 7 - (total % 7);
+  for (let i = 0; i < rem; i++) { const d = document.createElement('div'); d.className = 'month-day other-month'; d.innerHTML = `<div class="md-num">${i+1}</div>`; grid.appendChild(d); }
+  vv.appendChild(grid);
+
+  renderAddEstanciaForm(vv);
+}
+
+function openEstanciaDayModal(dStr, activas) {
+  if (!activas.length) return;
+  const old = document.getElementById('estancia-day-modal'); if (old) old.remove();
+  const ov = document.createElement('div'); ov.className = 'modal-overlay'; ov.id = 'estancia-day-modal';
+  const [y,m,d] = dStr.split('-').map(Number);
+  const label = `${d} ${MS[m-1]} ${y}`;
+  const rows = activas.map(e => `
+    <div class="modal-item" onclick="openEditEstanciaModal(${e.id});document.getElementById('estancia-day-modal').remove()">
+      <div style="width:8px;height:8px;border-radius:50%;background:${FCOL[e.finca]||'#ccc'};flex-shrink:0;margin-top:3px"></div>
+      <div class="modal-item-text">
+        <div style="font-weight:500">${escapeHtml(e.finca)}</div>
+        <div style="font-size:10px;color:var(--text-tertiary)">${formatDateLabel(e.entrada)} → ${formatDateLabel(e.salida)}${e.cliente?' · '+escapeHtml(e.cliente):''}</div>
+        ${e.notas?`<div style="font-size:10px;color:var(--text-secondary)">${escapeHtml(e.notas)}</div>`:''}
+      </div>
+    </div>`).join('');
+  ov.innerHTML = `<div class="modal-box">
+    <div class="modal-title">🏠 ${label}</div>
+    <div class="modal-list">${rows}</div>
+    <div class="modal-btns"><div class="btn-cancel" onclick="document.getElementById('estancia-day-modal').remove()">Cerrar</div></div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.onclick = e => { if (e.target === ov) ov.remove(); };
+}
+
+function formatDateLabel(str) {
+  if (!str) return '?';
+  const [y,m,d] = str.split('-').map(Number);
+  return `${d} ${MS[m-1]}`;
+}
+
+function renderEstanciaCard(e, ahora) {
+  const activa = e.entrada <= ahora && e.salida > ahora;
+  const pasada = e.salida <= ahora;
+  const el = document.createElement('div'); el.className = 'task-global-item';
+  el.style.cursor = 'pointer';
+  el.onclick = () => openEditEstanciaModal(e.id);
+  const col = FCOL[e.finca] || '#ffe082';
+  const estado = activa ? `<span class="tbadge" style="background:#fff8e1;color:#e65100;border:1px solid #ffe082">🏠 Activa</span>` :
+                 pasada ? `<span class="tbadge" style="background:#f5f5f5;color:#999">Pasada</span>` :
+                          `<span class="tbadge" style="background:#e8f5e9;color:#2e7d32">Próxima</span>`;
+  el.innerHTML = `<div style="width:8px;height:36px;border-radius:3px;background:${col};flex-shrink:0"></div>
+    <div class="tinfo">
+      <div class="ttitle">${escapeHtml(e.finca)}${e.cliente?' · <span style="font-weight:400;color:var(--text-secondary)">'+escapeHtml(e.cliente)+'</span>':''}</div>
+      <div class="tmeta">${formatDateLabel(e.entrada)} → ${formatDateLabel(e.salida)}${e.notas?' · '+escapeHtml(e.notas.slice(0,30)):''}</div>
+    </div>
+    ${estado}`;
+  return el;
+}
+
+function renderAddEstanciaForm(vv, prefinca) {
+  // Botón colapsable
+  const toggleBtn = document.createElement('div');
+  toggleBtn.className = 'add-toggle-btn'; toggleBtn.id = 'add-estancia-toggle-btn';
+  toggleBtn.textContent = '+ Nueva estancia';
+  toggleBtn.onclick = () => {
+    const f = document.getElementById('add-estancia-form');
+    const open = f.style.display !== 'none';
+    f.style.display = open ? 'none' : 'block';
+    toggleBtn.textContent = open ? '+ Nueva estancia' : '− Cerrar';
+  };
+  vv.appendChild(toggleBtn);
+
+  const box = document.createElement('div'); box.id = 'add-estancia-form'; box.className = 'add-task-box'; box.style.display = 'none';
+  box.innerHTML = `
+    <div class="field-label">Finca</div>
+    <select id="ne-finca">${FINCAS.map(f=>`<option value="${escapeHtml(f)}" ${prefinca===f?'selected':''}>${escapeHtml(f)}</option>`).join('')}</select>
+    <div class="field-label" style="margin-top:8px">Cliente (opcional)</div>
+    <input id="ne-cliente" placeholder="Nombre del cliente o reserva...">
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <div style="flex:1"><div class="field-label">Entrada</div><input type="date" id="ne-entrada"></div>
+      <div style="flex:1"><div class="field-label">Salida</div><input type="date" id="ne-salida"></div>
+    </div>
+    <div class="field-label" style="margin-top:8px">Notas (opcional)</div>
+    <input id="ne-notas" placeholder="Observaciones...">
+    <div class="box-btns" style="margin-top:10px">
+      <button class="btn-save" onclick="addEstancia()">Guardar estancia</button>
+    </div>`;
+  vv.appendChild(box);
+}
+
+function addEstancia() {
+  const finca = document.getElementById('ne-finca').value;
+  const entrada = document.getElementById('ne-entrada').value;
+  const salida = document.getElementById('ne-salida').value;
+  const cliente = (document.getElementById('ne-cliente').value || '').trim();
+  const notas = (document.getElementById('ne-notas').value || '').trim();
+  if (!finca) { showToast('Elige una finca'); return; }
+  if (!entrada || !salida) { showToast('Indica entrada y salida'); return; }
+  if (salida <= entrada) { showToast('La salida debe ser posterior a la entrada'); return; }
+  estancias.unshift({ id: nextId++, finca, entrada, salida, cliente, notas });
+  saveState();
+  if (currentEstanciasFinca) renderEstanciasFincaDetail();
+  else buildEstancias();
+  showToast('✅ Estancia añadida');
+}
+
+// Modal editar estancia
+let editEstanciaId = null;
+function openEditEstanciaModal(id) {
+  const e = estancias.find(x => x.id === id); if (!e) return;
+  editEstanciaId = id;
+  const old = document.getElementById('edit-estancia-modal'); if (old) old.remove();
+  const ov = document.createElement('div'); ov.className = 'modal-overlay'; ov.id = 'edit-estancia-modal';
+  ov.innerHTML = `<div class="modal-box">
+    <div class="modal-title">✎ Editar estancia</div>
+    <div class="field-label">Finca</div>
+    <select id="ee-finca">${FINCAS.map(f=>`<option value="${escapeHtml(f)}" ${e.finca===f?'selected':''}>${escapeHtml(f)}</option>`).join('')}</select>
+    <div class="field-label" style="margin-top:8px">Cliente (opcional)</div>
+    <input id="ee-cliente" value="${escapeHtml(e.cliente||'')}">
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <div style="flex:1"><div class="field-label">Entrada</div><input type="date" id="ee-entrada" value="${e.entrada}"></div>
+      <div style="flex:1"><div class="field-label">Salida</div><input type="date" id="ee-salida" value="${e.salida}"></div>
+    </div>
+    <div class="field-label" style="margin-top:8px">Notas</div>
+    <input id="ee-notas" value="${escapeHtml(e.notas||'')}">
+    <div class="field-label" style="margin-top:8px">🔔 Aviso de llegada</div>
+    ${renderReminderFieldHTML('ee', e.reminder || null, e.entrada)}
+    <div class="modal-btns" style="margin-top:12px">
+      <button class="btn-danger" onclick="deleteEstancia()">🗑 Borrar</button>
+      <div class="btn-cancel" onclick="closeEditEstanciaModal()">Cancelar</div>
+      <div class="btn-ok" onclick="saveEditEstancia()">Guardar</div>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.onclick = ev => { if (ev.target === ov) closeEditEstanciaModal(); };
+}
+function closeEditEstanciaModal() { const m = document.getElementById('edit-estancia-modal'); if (m) m.remove(); editEstanciaId = null; }
+function saveEditEstancia() {
+  const e = estancias.find(x => x.id === editEstanciaId); if (!e) return;
+  if (e.reminder && e.reminder.reminderId) NV_SYNC.deleteReminder(e.reminder.reminderId);
+  e.finca = document.getElementById('ee-finca').value;
+  e.cliente = document.getElementById('ee-cliente').value.trim();
+  e.entrada = document.getElementById('ee-entrada').value;
+  e.salida = document.getElementById('ee-salida').value;
+  e.notas = document.getElementById('ee-notas').value.trim();
+  e.reminder = readReminderFromField('ee', e.entrada);
+  if (!e.entrada || !e.salida || e.salida <= e.entrada) { showToast('Fechas no válidas'); return; }
+  if (e.reminder && e.reminder.fireAt) scheduleEstanciaReminder(e);
+  saveState();
+  closeEditEstanciaModal();
+  if (currentEstanciasFinca) renderEstanciasFincaDetail(); else buildEstancias();
+  refreshCals();
+  showToast('✅ Actualizada');
+}
+function deleteEstancia() {
+  if (!confirm('¿Borrar esta estancia?')) return;
+  const e = estancias.find(x => x.id === editEstanciaId);
+  if (e && e.reminder && e.reminder.reminderId) NV_SYNC.deleteReminder(e.reminder.reminderId);
+  estancias = estancias.filter(x => x.id !== editEstanciaId);
+  saveState();
+  closeEditEstanciaModal();
+  if (currentEstanciasFinca) renderEstanciasFincaDetail(); else buildEstancias();
+  refreshCals();
+  showToast('🗑 Borrada');
+}
+
+// ============================================================
+// ===== SISTEMA DE NOTIFICACIONES PUSH =====
+// ============================================================
+
+// ---- UI: botón de activar notificaciones en la topbar ----
+(function() {
+  document.addEventListener('DOMContentLoaded', () => {
+    // Añadir botón 🔔 en la topbar si las notificaciones son soportadas
+    if (!('Notification' in window)) return;
+    const topRight = document.querySelector('.topbar > div:last-child');
+    if (!topRight) return;
+    const btn = document.createElement('button');
+    btn.id = 'notif-btn';
+    btn.title = 'Activar notificaciones';
+    btn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:18px;padding:4px 6px;opacity:.7;transition:opacity .2s';
+    btn.onclick = toggleNotifications;
+    topRight.insertBefore(btn, topRight.firstChild);
+    updateNotifBtn();
+  });
+})();
+
+function updateNotifBtn() {
+  const btn = document.getElementById('notif-btn');
+  if (!btn) return;
+  const perm = Notification.permission;
+  btn.textContent = perm === 'granted' ? '🔔' : '🔕';
+  btn.title = perm === 'granted' ? 'Notificaciones activas' : 'Activar notificaciones';
+  btn.style.opacity = perm === 'granted' ? '1' : '0.5';
+}
+
+async function toggleNotifications() {
+  if (!('Notification' in window)) { showToast('Tu dispositivo no soporta notificaciones'); return; }
+  if (Notification.permission === 'granted') {
+    showToast('🔔 Notificaciones ya activas');
+    return;
+  }
+  showToast('Solicitando permiso...');
+  const ok = await NV_SYNC.requestPermission();
+  updateNotifBtn();
+  if (ok) {
+    showToast('🔔 Notificaciones activadas');
+  } else {
+    showToast('❌ Permiso denegado — actívalo en ajustes del navegador');
+  }
+}
+
+// ---- Renderizar campo de aviso (HTML) ----
+// prefix: 'et' (edit task) | 'ee' (edit estancia)
+// currentReminder: objeto guardado o null
+// dateHint: fecha base para estancias (YYYY-MM-DD)
+function renderReminderFieldHTML(prefix, currentReminder, dateHint) {
+  const hasReminder = currentReminder && currentReminder.fireAt;
+  const curDate = hasReminder ? new Date(currentReminder.fireAt) : null;
+  const curDateStr = curDate ? `${curDate.getFullYear()}-${String(curDate.getMonth()+1).padStart(2,'0')}-${String(curDate.getDate()).padStart(2,'0')}` : (dateHint || '');
+  const curTimeStr = curDate ? `${String(curDate.getHours()).padStart(2,'0')}:${String(curDate.getMinutes()).padStart(2,'0')}` : '09:00';
+  const curOffset = hasReminder ? (currentReminder.offsetMinutes || 0) : 0;
+
+  return `
+    <div id="${prefix}-reminder-section" style="background:var(--bg-secondary);border-radius:var(--radius-md);padding:10px;margin-bottom:8px">
+      <div class="emp-pills" style="margin-bottom:8px">
+        <div class="emp-pill${!hasReminder?' on':''}" id="${prefix}-rem-off" onclick="setReminderMode('${prefix}','off')">Sin aviso</div>
+        <div class="emp-pill${hasReminder?' on':''}" id="${prefix}-rem-on" onclick="setReminderMode('${prefix}','on')">🔔 Programar</div>
+      </div>
+      <div id="${prefix}-rem-detail" style="display:${hasReminder?'block':'none'}">
+        <div style="display:flex;gap:6px;margin-bottom:8px">
+          <div style="flex:1"><div class="field-label">Fecha</div><input type="date" id="${prefix}-rem-date" value="${curDateStr}"></div>
+          <div style="flex:1"><div class="field-label">Hora</div><input type="time" id="${prefix}-rem-time" value="${curTimeStr}"></div>
+        </div>
+        <div class="field-label">Avisar también</div>
+        <div class="emp-pills" style="flex-wrap:wrap;gap:4px" id="${prefix}-rem-offsets">
+          ${[
+            {v:0,   l:'A la hora'},
+            {v:10,  l:'10 min antes'},
+            {v:60,  l:'1 hora antes'},
+            {v:120, l:'2 horas antes'},
+            {v:1440,l:'1 día antes'},
+            {v:2880,l:'2 días antes'}
+          ].map(o => `<div class="emp-pill${curOffset===o.v?' on':''}" onclick="selectReminderOffset('${prefix}',${o.v})">${o.l}</div>`).join('')}
+        </div>
+      </div>
+    </div>`;
+}
+
+function setReminderMode(prefix, mode) {
+  const detail = document.getElementById(`${prefix}-rem-detail`);
+  const offBtn = document.getElementById(`${prefix}-rem-off`);
+  const onBtn  = document.getElementById(`${prefix}-rem-on`);
+  if (!detail) return;
+  detail.style.display = mode === 'on' ? 'block' : 'none';
+  offBtn.classList.toggle('on', mode === 'off');
+  onBtn.classList.toggle('on', mode === 'on');
+}
+
+function selectReminderOffset(prefix, val) {
+  const container = document.getElementById(`${prefix}-rem-offsets`);
+  if (!container) return;
+  container.querySelectorAll('.emp-pill').forEach(p => p.classList.remove('on'));
+  const pills = container.querySelectorAll('.emp-pill');
+  const offsets = [0, 10, 60, 120, 1440, 2880];
+  const idx = offsets.indexOf(val);
+  if (idx >= 0 && pills[idx]) pills[idx].classList.add('on');
+  container.dataset.selected = val;
+}
+
+function readReminderFromField(prefix, dateHint) {
+  const onBtn = document.getElementById(`${prefix}-rem-on`);
+  if (!onBtn || !onBtn.classList.contains('on')) return null;
+  const dateEl = document.getElementById(`${prefix}-rem-date`);
+  const timeEl = document.getElementById(`${prefix}-rem-time`);
+  if (!dateEl || !timeEl || !dateEl.value || !timeEl.value) return null;
+
+  const [y,m,d] = dateEl.value.split('-').map(Number);
+  const [hh,mm] = timeEl.value.split(':').map(Number);
+  const fireAt = new Date(y, m-1, d, hh, mm).getTime();
+  if (isNaN(fireAt) || fireAt < Date.now() - 60000) {
+    showToast('La fecha del aviso ya ha pasado'); return null;
+  }
+
+  const container = document.getElementById(`${prefix}-rem-offsets`);
+  const offsetMinutes = container && container.dataset.selected !== undefined
+    ? parseInt(container.dataset.selected, 10) : 0;
+
+  const reminderId = `rem_${Date.now()}_${Math.random().toString(36).slice(2,7)}`;
+  return { fireAt, offsetMinutes, reminderId };
+}
+
+// ---- Programar recordatorios ----
+function scheduleTaskReminder(task, finca) {
+  if (!task.reminder || !task.reminder.fireAt) return;
+  const user = (typeof currentUser === 'function' && currentUser()) ? currentUser().username : 'unknown';
+  const reminders = buildReminderTimes(task.reminder);
+  reminders.forEach((fireAt, i) => {
+    NV_SYNC.scheduleReminder({
+      id: `${task.reminder.reminderId}_${i}`,
+      reminderId: task.reminder.reminderId,
+      title: `📋 Tarea: ${task.title}`,
+      body: finca ? `En ${finca}` : '',
+      fireAt,
+      userId: user,
+      type: 'tarea',
+      fired: false
+    });
+  });
+  // Disparar verificación inmediata
+  kickReminderCheck();
+}
+
+function scheduleEstanciaReminder(estancia) {
+  if (!estancia.reminder || !estancia.reminder.fireAt) return;
+  const user = (typeof currentUser === 'function' && currentUser()) ? currentUser().username : 'unknown';
+  const reminders = buildReminderTimes(estancia.reminder);
+  reminders.forEach((fireAt, i) => {
+    NV_SYNC.scheduleReminder({
+      id: `${estancia.reminder.reminderId}_${i}`,
+      reminderId: estancia.reminder.reminderId,
+      title: `🏠 Llegada en ${estancia.finca}`,
+      body: estancia.cliente ? `Cliente: ${estancia.cliente}` : `Entrada: ${formatDateLabel(estancia.entrada)}`,
+      fireAt,
+      userId: user,
+      type: 'estancia',
+      fired: false
+    });
+  });
+  kickReminderCheck();
+}
+
+function buildReminderTimes(reminder) {
+  // Siempre añadir el aviso principal + el offset seleccionado
+  const times = new Set([reminder.fireAt]);
+  if (reminder.offsetMinutes && reminder.offsetMinutes > 0) {
+    times.add(reminder.fireAt - reminder.offsetMinutes * 60000);
+  }
+  return [...times].filter(t => t > Date.now());
+}
+
+function kickReminderCheck() {
+  // Pedir al SW que verifique recordatorios ahora
+  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+    navigator.serviceWorker.controller.postMessage({ type: 'CHECK_REMINDERS' });
+  }
+}
+
+// Verificar recordatorios al cargar la app (en primer plano)
+document.addEventListener('DOMContentLoaded', () => {
+  setTimeout(checkRemindersInForeground, 3000);
+  setInterval(checkRemindersInForeground, 60000); // cada minuto
+});
+
+async function checkRemindersInForeground() {
+  if (!window.FIREBASE_ENABLED || Notification.permission !== 'granted') return;
+  try {
+    const user = (typeof currentUser === 'function' && currentUser()) ? currentUser().username : null;
+    if (!user) return;
+    const resp = await fetch(`https://natura-viva-ddc86-default-rtdb.europe-west1.firebasedatabase.app/reminders/${user}.json`);
+    if (!resp.ok) return;
+    const userReminders = await resp.json();
+    if (!userReminders) return;
+    const now = Date.now();
+    for (const [key, r] of Object.entries(userReminders)) {
+      if (r && r.fireAt && r.fireAt <= now && !r.fired) {
+        // Mostrar notificación
+        new Notification(r.title || 'Natura Viva', {
+          body: r.body || '',
+          icon: './icons/icon-192.png',
+          badge: './icons/icon-192.png',
+          tag: `reminder-${r.id}`
+        });
+        // Marcar como fired
+        await fetch(
+          `https://natura-viva-ddc86-default-rtdb.europe-west1.firebasedatabase.app/reminders/${user}/${key}/fired.json`,
+          { method: 'PUT', body: 'true', headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+  } catch(err) { /* silencioso */ }
 }
