@@ -177,10 +177,11 @@ function loadState() {
       houseData: s.houseData || initHouseData(),
       empHours: s.empHours || initEmpHours(),
       schedOver: s.schedOver || {},
+      compras: s.compras || [],
       nextId: s.nextId || 100
     };
   } catch(e) {
-    return { fuelDays:{}, wkndTasks:{}, houseData: initHouseData(), empHours: initEmpHours(), schedOver:{}, nextId: 100 };
+    return { fuelDays:{}, wkndTasks:{}, houseData: initHouseData(), empHours: initEmpHours(), schedOver:{}, compras:[], nextId: 100 };
   }
 }
 function initHouseData() {
@@ -196,7 +197,7 @@ function initEmpHours() {
 }
 function saveState() {
   try {
-    localStorage.setItem('nv_state', JSON.stringify({ fuelDays, wkndTasks, houseData, empHours, schedOver, nextId }));
+    localStorage.setItem('nv_state', JSON.stringify({ fuelDays, wkndTasks, houseData, empHours, schedOver, compras, nextId }));
   } catch(e) { console.log('No se pudo guardar:', e); }
   // Subir a la nube si Firebase está activo
   if (window.NV_SYNC && window.NV_SYNC.enabled) {
@@ -210,6 +211,7 @@ let wkndTasks = _s.wkndTasks;
 let houseData = _s.houseData;
 let empHours = _s.empHours;
 let schedOver = _s.schedOver;
+let compras = _s.compras;
 let nextId = _s.nextId;
 EMP_NAMES.forEach(n => { if (!empHours[n]) empHours[n] = {}; });
 // asegurar IDs en notas antiguas (compatibilidad)
@@ -1516,7 +1518,10 @@ function buildTareasLista(vv) {
   selBtn.onclick = () => { selectMode = !selectMode; if (!selectMode) selectedTasks.clear(); buildTareas(); };
   fr.appendChild(selBtn); vv.appendChild(fr);
   let any = false;
-  FINCAS.forEach(f => {
+  // Incluir fincas normales + bucket libre
+  const allBuckets = [...FINCAS, ...(houseData['__libre__'] ? ['__libre__'] : [])];
+  allBuckets.forEach(f => {
+    if (!houseData[f]) return;
     houseData[f].tareas.forEach(t => {
       if (taskFilter === 'pending' && t.done) return;
       if (taskFilter === 'done' && !t.done) return;
@@ -1531,15 +1536,25 @@ function buildTareasLista(vv) {
       const tinfoClick = selectMode ? '' : `onclick="openEditTaskModal('${f}',${t.id})"`;
       const photoIcon = t.img ? '<span style="margin-left:4px">📷</span>' : '';
       const thumbHtml = t.img ? `<img src="${t.img}" style="width:36px;height:36px;border-radius:4px;object-fit:cover;flex-shrink:0;cursor:pointer" onclick="event.stopPropagation();openPhotoViewer('${t.img}')">` : '';
-      el.innerHTML = `${selectMode?selBoxHtml:checkHtml}${thumbHtml}<div class="tinfo" ${tinfoClick}><div class="ttitle${t.done?' done':''}">${escapeHtml(t.title)}${photoIcon}</div><div class="tmeta"><span style="display:flex;align-items:center;gap:2px"><div style="width:7px;height:7px;border-radius:2px;background:${FCOL[f]}"></div>${escapeHtml(f)}</span>${aHtml}</div></div><span class="tbadge ${t.prio==='urgent'?'b-u':'b-n'}">${t.prio==='urgent'?'Urgente':'Normal'}</span>`;
+      const locationLabel = f === '__libre__' ? (t.libreLocation || 'Sin ubicación') : f;
+      const locationColor = f === '__libre__' ? '#aaa' : FCOL[f];
+      el.innerHTML = `${selectMode?selBoxHtml:checkHtml}${thumbHtml}<div class="tinfo" ${tinfoClick}><div class="ttitle${t.done?' done':''}">${escapeHtml(t.title)}${photoIcon}</div><div class="tmeta"><span style="display:flex;align-items:center;gap:2px"><div style="width:7px;height:7px;border-radius:2px;background:${locationColor}"></div>${escapeHtml(locationLabel)}</span>${aHtml}</div></div><span class="tbadge ${t.prio==='urgent'?'b-u':'b-n'}">${t.prio==='urgent'?'Urgente':'Normal'}</span>`;
       vv.appendChild(el);
     });
   });
   if (!any) { const el = document.createElement('div'); el.style.cssText = 'font-size:12px;color:var(--text-tertiary);padding:8px 0'; el.textContent = 'Sin tareas en esta vista.'; vv.appendChild(el); }
   const box = document.createElement('div'); box.className = 'add-task-box';
-  box.innerHTML = `<div class="field-label">Nueva tarea</div><input id="gt-title" placeholder="Descripción..."><div class="assign-row"><span class="assign-label">Asignar a:</span><div class="emp-pills" id="gt-pills"></div></div><div class="add-task-row"><select id="gt-finca"><option value="">— Finca —</option>${FINCAS.map(f=>`<option>${f}</option>`).join('')}</select><select id="gt-prio"><option value="normal">Normal</option><option value="urgent">Urgente</option></select><button class="btn-send" onclick="addGlobalTask()">Enviar →</button></div>`;
+  box.innerHTML = `<div class="field-label">Nueva tarea</div><input id="gt-title" placeholder="Descripción..."><div class="assign-row"><span class="assign-label">Asignar a:</span><div class="emp-pills" id="gt-pills"></div></div><div class="add-task-row"><select id="gt-finca"><option value="">— Finca —</option>${FINCAS.map(f=>`<option>${f}</option>`).join('')}<option value="__libre__">✏️ Texto libre...</option></select><select id="gt-prio"><option value="normal">Normal</option><option value="urgent">Urgente</option></select><button class="btn-send" onclick="addGlobalTask()">Enviar →</button></div><div id="gt-libre-row" style="display:none;margin-top:6px"><input id="gt-libre-text" placeholder="Escribe dónde es el trabajo..." style="width:100%"></div>`;
   vv.appendChild(box);
   renderEmpPills('gt-pills', newTaskAssigns);
+  // Mostrar campo libre si se elige "Texto libre"
+  setTimeout(() => {
+    const gtFinca = document.getElementById('gt-finca');
+    if (gtFinca) gtFinca.addEventListener('change', () => {
+      const libreRow = document.getElementById('gt-libre-row');
+      if (libreRow) libreRow.style.display = gtFinca.value === '__libre__' ? 'block' : 'none';
+    });
+  }, 20);
 }
 function buildTareasPorFinca(vv) {
   let any = false;
@@ -1581,21 +1596,55 @@ function renderEmpPills(containerId, setRef) {
     c.appendChild(p);
   });
 }
-function toggleGT(f, id) { const t = houseData[f].tareas.find(x => x.id === id); if (t) { t.done = !t.done; saveState(); buildTareas(); } }
-function bulkDone() { selectedTasks.forEach(tid => { const [f, idStr] = tid.split('::'); const t = houseData[f] && houseData[f].tareas.find(x => x.id === +idStr); if (t) t.done = true; }); selectedTasks.clear(); selectMode = false; saveState(); buildTareas(); showToast('✅ Hechas'); }
-function bulkDelete() { if (!confirm('¿Borrar las tareas seleccionadas?')) return; selectedTasks.forEach(tid => { const [f, idStr] = tid.split('::'); if (houseData[f]) houseData[f].tareas = houseData[f].tareas.filter(x => x.id !== +idStr); }); selectedTasks.clear(); selectMode = false; saveState(); buildTareas(); showToast('🗑 Eliminadas'); }
+function toggleGT(f, id) {
+  if (!houseData[f] && f === '__libre__' && houseData['__libre__']) f = '__libre__';
+  const t = houseData[f] && houseData[f].tareas.find(x => x.id === id);
+  if (t) { t.done = !t.done; saveState(); buildTareas(); }
+}
+function bulkDone() {
+  selectedTasks.forEach(tid => {
+    const [f, idStr] = tid.split('::');
+    const bucket = houseData[f] || (f === '__libre__' && houseData['__libre__']);
+    const t = bucket && bucket.tareas.find(x => x.id === +idStr);
+    if (t) t.done = true;
+  });
+  selectedTasks.clear(); selectMode = false; saveState(); buildTareas(); showToast('✅ Hechas');
+}
+function bulkDelete() {
+  if (!confirm('¿Borrar las tareas seleccionadas?')) return;
+  selectedTasks.forEach(tid => {
+    const [f, idStr] = tid.split('::');
+    if (houseData[f]) houseData[f].tareas = houseData[f].tareas.filter(x => x.id !== +idStr);
+  });
+  selectedTasks.clear(); selectMode = false; saveState(); buildTareas(); showToast('🗑 Eliminadas');
+}
 function addGlobalTask() {
   const title = document.getElementById('gt-title').value.trim();
-  const finca = document.getElementById('gt-finca').value;
+  const fincaVal = document.getElementById('gt-finca').value;
   const prio = document.getElementById('gt-prio').value;
   if (!title) { showToast('Escribe una tarea'); return; }
-  if (!finca) { showToast('Elige una finca'); return; }
+  if (!fincaVal) { showToast('Elige una finca o escribe una ubicación'); return; }
   const assigns = Array.from(newTaskAssigns);
-  houseData[finca].tareas.unshift({ id: nextId++, title, prio, done: false, assigns });
-  newTaskAssigns.clear();
-  saveState();
-  buildTareas();
-  showToast(`✅ Añadida en ${finca}`);
+  if (fincaVal === '__libre__') {
+    const libreText = (document.getElementById('gt-libre-text').value || '').trim();
+    if (!libreText) { showToast('Escribe la ubicación'); return; }
+    // Guardamos en una finca especial "Libre" que no existe en FINCAS
+    // La tarea lleva un campo libreLocation
+    // Para no romper la estructura, la guardamos bajo la primera finca pero con tag libre
+    // Mejor: creamos un bucket "libre" en houseData
+    if (!houseData['__libre__']) houseData['__libre__'] = { notas: [], tareas: [] };
+    houseData['__libre__'].tareas.unshift({ id: nextId++, title, prio, done: false, assigns, libreLocation: libreText });
+    newTaskAssigns.clear();
+    saveState();
+    buildTareas();
+    showToast(`✅ Añadida en "${libreText}"`);
+  } else {
+    houseData[fincaVal].tareas.unshift({ id: nextId++, title, prio, done: false, assigns });
+    newTaskAssigns.clear();
+    saveState();
+    buildTareas();
+    showToast(`✅ Añadida en ${fincaVal}`);
+  }
 }
 
 // ===== DETALLE CASA =====
@@ -1831,7 +1880,7 @@ function addTarea(f) {
 }
 
 // ===== NAVEGACIÓN =====
-const TABS = ['semana','mes','tareas','equipo'];
+const TABS = ['semana','mes','tareas','equipo','compras'];
 function switchMain(tab) {
   TABS.forEach((t, i) => {
     document.getElementById('view-' + t).style.display = 'none';
@@ -1846,6 +1895,7 @@ function switchMain(tab) {
   if (tab === 'mes') buildMonth();
   if (tab === 'tareas') buildTareas();
   if (tab === 'equipo') buildEquipo();
+  if (tab === 'compras') buildCompras();
 }
 
 document.querySelectorAll('.nav-tab').forEach(tab => {
@@ -1855,4 +1905,419 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
 // arranque: solo si hay sesión activa pinta la semana
 if (isLoggedIn()) {
   buildWeek();
+}
+
+// ============================================================
+// ===== COMPRAS =====
+// ============================================================
+// Estructura: compras = [{id, desc, finca, libreText, img, done, fecha}]
+// finca: nombre de finca, o '__libre__' si es texto libre
+// libreText: texto cuando finca === '__libre__'
+
+let comprasFilter = 'pending'; // 'pending' | 'done'
+let comprasMode = 'lista';     // 'lista' | 'finca'
+let comprasSelectMode = false;
+let selectedCompras = new Set();
+let comprasPhotoData = null;
+
+function buildCompras() {
+  const vv = document.getElementById('view-compras'); vv.innerHTML = '';
+
+  // Barra de modo
+  const mr = document.createElement('div'); mr.className = 'mode-row';
+  [{k:'lista',l:'📋 Lista'},{k:'finca',l:'🏠 Por finca'}].forEach(({k,l}) => {
+    const b = document.createElement('div'); b.className = 'mode-btn' + (comprasMode===k?' active':'');
+    b.textContent = l;
+    b.onclick = () => { comprasMode = k; buildCompras(); };
+    mr.appendChild(b);
+  });
+  vv.appendChild(mr);
+
+  if (comprasMode === 'finca') return buildComprasPorFinca(vv);
+  buildComprasLista(vv);
+}
+
+function buildComprasLista(vv) {
+  // Barra selección + exportar
+  if (comprasSelectMode && selectedCompras.size > 0) {
+    const bar = document.createElement('div'); bar.className = 'bulk-bar';
+    const conFoto = [...selectedCompras].filter(id => {
+      const c = compras.find(x => x.id === id);
+      return c && c.img;
+    }).length;
+    bar.innerHTML = `<span><strong>${selectedCompras.size}</strong> seleccionada${selectedCompras.size>1?'s':''}</span>
+      ${conFoto > 0 ? `<button class="bulk-btn" onclick="exportarFacturasPDF()">📄 Exportar ${conFoto} factura${conFoto>1?'s':''}</button>` : ''}
+      <button class="bulk-btn" onclick="bulkComprasDone()">✓ Hechas</button>
+      <button class="bulk-btn" onclick="bulkComprasDelete()">✕ Eliminar</button>
+      <button class="bulk-btn" style="margin-left:auto" onclick="comprasSelectMode=false;selectedCompras.clear();buildCompras()">Cancelar</button>`;
+    vv.appendChild(bar);
+  }
+
+  // Filtros
+  const fr = document.createElement('div'); fr.className = 'filter-row';
+  [['pending','Pendientes'],['done','Hechas'],['all','Todas']].forEach(([k,l]) => {
+    const b = document.createElement('div'); b.className = 'filter-btn' + (comprasFilter===k?' active':'');
+    b.textContent = l;
+    b.onclick = () => { comprasFilter = k; buildCompras(); };
+    fr.appendChild(b);
+  });
+  const selBtn = document.createElement('div'); selBtn.className = 'sel-toggle' + (comprasSelectMode?' on':'');
+  selBtn.textContent = comprasSelectMode ? '✓ Seleccionando' : 'Seleccionar';
+  selBtn.onclick = () => { comprasSelectMode = !comprasSelectMode; if (!comprasSelectMode) selectedCompras.clear(); buildCompras(); };
+  fr.appendChild(selBtn);
+  vv.appendChild(fr);
+
+  // Lista
+  const filtered = compras.filter(c => {
+    if (comprasFilter === 'pending') return !c.done;
+    if (comprasFilter === 'done') return c.done;
+    return true;
+  });
+
+  if (!filtered.length) {
+    const el = document.createElement('div'); el.style.cssText = 'font-size:12px;color:var(--text-tertiary);padding:12px 0';
+    el.textContent = 'Sin compras en esta vista.'; vv.appendChild(el);
+  }
+
+  filtered.forEach(c => {
+    const isSel = selectedCompras.has(c.id);
+    const el = document.createElement('div'); el.className = 'task-global-item' + (isSel?' sel':'');
+    if (comprasSelectMode) {
+      el.onclick = () => { if (selectedCompras.has(c.id)) selectedCompras.delete(c.id); else selectedCompras.add(c.id); buildCompras(); };
+      el.style.cursor = 'pointer';
+    }
+    const locLabel = c.finca === '__libre__' ? (c.libreText || 'Sin ubicación') : c.finca;
+    const locColor = c.finca === '__libre__' ? '#aaa' : (FCOL[c.finca] || '#ccc');
+    const thumbHtml = c.img ? `<img src="${c.img}" style="width:36px;height:36px;border-radius:4px;object-fit:cover;flex-shrink:0;cursor:pointer" onclick="event.stopPropagation();openPhotoViewer('${c.img}')">` : '';
+    const selBoxHtml = `<div class="sel-box${isSel?' checked':''}">${isSel?'✓':''}</div>`;
+    const checkHtml = `<div class="tcheck${c.done?' done':''}" onclick="event.stopPropagation();toggleCompra(${c.id})">${c.done?'✓':''}</div>`;
+    const editClick = comprasSelectMode ? '' : `onclick="openEditCompraModal(${c.id})"`;
+    el.innerHTML = `${comprasSelectMode?selBoxHtml:checkHtml}${thumbHtml}
+      <div class="tinfo" ${editClick}>
+        <div class="ttitle${c.done?' done':''}">${escapeHtml(c.desc)}${c.img?' 📷':''}</div>
+        <div class="tmeta"><span style="display:flex;align-items:center;gap:2px"><div style="width:7px;height:7px;border-radius:2px;background:${locColor}"></div>${escapeHtml(locLabel)}</span></div>
+        ${c.fecha ? `<div style="font-size:10px;color:var(--text-tertiary)">${escapeHtml(c.fecha)}</div>` : ''}
+      </div>
+      <span class="tbadge b-n" style="background:#e8f5e9;color:#2e7d32">${c.done?'✓ Hecha':'Pendiente'}</span>`;
+    vv.appendChild(el);
+  });
+
+  // Formulario nueva compra
+  renderAddCompraForm(vv);
+}
+
+function renderAddCompraForm(vv) {
+  const box = document.createElement('div'); box.className = 'add-task-box';
+  box.innerHTML = `
+    <div class="field-label">Nueva compra</div>
+    <input id="nc-desc" placeholder="Descripción del material o compra...">
+    <div class="add-task-row" style="margin-top:6px">
+      <select id="nc-finca">
+        <option value="">— Finca —</option>
+        ${FINCAS.map(f=>`<option value="${escapeHtml(f)}">${escapeHtml(f)}</option>`).join('')}
+        <option value="__libre__">✏️ Texto libre...</option>
+      </select>
+    </div>
+    <div id="nc-libre-row" style="display:none;margin-top:6px">
+      <input id="nc-libre-text" placeholder="Escribe la ubicación o contexto...">
+    </div>
+    <div id="nc-photo-preview" style="margin-top:6px"></div>
+    <div class="box-btns" style="margin-top:8px">
+      <label class="btn-foto-lbl">
+        <input type="file" accept="image/*" class="file-input-hidden" id="nc-foto-input" onchange="handleCompraPhoto(event)">
+        📷 Foto/Factura
+      </label>
+      <button class="btn-send" onclick="addCompra()">Enviar →</button>
+    </div>`;
+  vv.appendChild(box);
+  comprasPhotoData = null;
+  setTimeout(() => {
+    const sel = document.getElementById('nc-finca');
+    if (sel) sel.addEventListener('change', () => {
+      const libreRow = document.getElementById('nc-libre-row');
+      if (libreRow) libreRow.style.display = sel.value === '__libre__' ? 'block' : 'none';
+    });
+  }, 20);
+}
+
+function buildComprasPorFinca(vv) {
+  // Agrupar por finca
+  const grupos = {};
+  compras.forEach(c => {
+    const key = c.finca === '__libre__' ? '__libre__' : c.finca;
+    if (!grupos[key]) grupos[key] = [];
+    grupos[key].push(c);
+  });
+
+  if (!Object.keys(grupos).length) {
+    const el = document.createElement('div'); el.style.cssText='font-size:12px;color:var(--text-tertiary);padding:12px 0;text-align:center';
+    el.textContent = 'No hay compras todavía.'; vv.appendChild(el);
+  }
+
+  // Primero las fincas conocidas, luego las libres
+  const ordered = [...FINCAS.filter(f => grupos[f]), ...(grupos['__libre__'] ? ['__libre__'] : [])];
+  ordered.forEach(key => {
+    const items = grupos[key];
+    const pending = items.filter(c => !c.done).length;
+    const locLabel = key === '__libre__' ? '✏️ Ubicación libre' : key;
+    const locColor = key === '__libre__' ? '#aaa' : (FCOL[key] || '#ccc');
+
+    const grp = document.createElement('div'); grp.className = 'compras-group';
+    grp.innerHTML = `<div class="compras-group-header" style="border-left: 4px solid ${locColor}">
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:500">${escapeHtml(locLabel)}</div>
+        <div style="font-size:10px;color:var(--text-tertiary)">${items.length} compra${items.length!==1?'s':''}</div>
+      </div>
+      ${pending ? `<span class="notif-b">${pending} pendiente${pending>1?'s':''}</span>` : '<span style="font-size:10px;color:var(--text-tertiary)">✓ todo hecho</span>'}
+    </div>`;
+
+    items.forEach(c => {
+      const row = document.createElement('div'); row.className = 'task-global-item';
+      const thumbHtml = c.img ? `<img src="${c.img}" style="width:36px;height:36px;border-radius:4px;object-fit:cover;flex-shrink:0;cursor:pointer" onclick="openPhotoViewer('${c.img}')">` : '';
+      const subLabel = key === '__libre__' ? (c.libreText || '') : '';
+      row.innerHTML = `<div class="tcheck${c.done?' done':''}" onclick="event.stopPropagation();toggleCompra(${c.id})">${c.done?'✓':''}</div>
+        ${thumbHtml}
+        <div class="tinfo" onclick="openEditCompraModal(${c.id})">
+          <div class="ttitle${c.done?' done':''}">${escapeHtml(c.desc)}${c.img?' 📷':''}</div>
+          ${subLabel ? `<div style="font-size:10px;color:var(--text-secondary)">${escapeHtml(subLabel)}</div>` : ''}
+        </div>`;
+      grp.appendChild(row);
+    });
+
+    vv.appendChild(grp);
+  });
+
+  // Botón para añadir
+  const addBtn = document.createElement('div'); addBtn.className = 'add-task-box';
+  addBtn.innerHTML = `<div style="text-align:center;padding:4px 0"><button class="btn-save" onclick="comprasMode='lista';buildCompras()">+ Nueva compra</button></div>`;
+  vv.appendChild(addBtn);
+}
+
+function handleCompraPhoto(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (file.size > 3000000) { showToast('Foto demasiado grande (máx 3 MB)'); return; }
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      // Para facturas guardamos más resolución (1200px) para que sea legible
+      const maxDim = 1200;
+      let w = img.width, h = img.height;
+      if (w > maxDim || h > maxDim) {
+        if (w > h) { h = h * maxDim / w; w = maxDim; }
+        else { w = w * maxDim / h; h = maxDim; }
+      }
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      comprasPhotoData = dataUrl;
+      const prev = document.getElementById('nc-photo-preview');
+      if (prev) prev.innerHTML = `<div class="photo-preview-mini"><img src="${dataUrl}"><button class="remove-photo" onclick="removeCompraPhoto()">×</button></div>`;
+      showToast('📷 Foto añadida');
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+function removeCompraPhoto() {
+  comprasPhotoData = null;
+  const prev = document.getElementById('nc-photo-preview');
+  if (prev) prev.innerHTML = '';
+  const inp = document.getElementById('nc-foto-input');
+  if (inp) inp.value = '';
+}
+
+function addCompra() {
+  const desc = (document.getElementById('nc-desc').value || '').trim();
+  const fincaVal = document.getElementById('nc-finca').value;
+  if (!desc) { showToast('Escribe la descripción'); return; }
+  const d = new Date();
+  const fecha = `${d.getDate()} ${MS[d.getMonth()]} ${d.getFullYear()}`;
+  const newC = { id: nextId++, desc, done: false, fecha, img: comprasPhotoData || null };
+  if (fincaVal === '__libre__') {
+    const libre = (document.getElementById('nc-libre-text').value || '').trim();
+    newC.finca = '__libre__';
+    newC.libreText = libre;
+  } else {
+    newC.finca = fincaVal || '__libre__';
+    newC.libreText = '';
+  }
+  compras.unshift(newC);
+  comprasPhotoData = null;
+  saveState();
+  buildCompras();
+  showToast('✅ Compra añadida');
+}
+
+function toggleCompra(id) {
+  const c = compras.find(x => x.id === id);
+  if (c) { c.done = !c.done; saveState(); buildCompras(); }
+}
+
+// Modal editar compra
+let editCompraId = null;
+function openEditCompraModal(id) {
+  const c = compras.find(x => x.id === id);
+  if (!c) return;
+  editCompraId = id;
+  window._editCompraPhoto = c.img || null;
+  const old = document.getElementById('edit-compra-modal'); if (old) old.remove();
+  const ov = document.createElement('div'); ov.className = 'modal-overlay'; ov.id = 'edit-compra-modal';
+  const photoHtml = c.img ? `<img class="modal-photo-preview" src="${c.img}" onclick="openPhotoViewer('${c.img}')">` : '';
+  const isLibre = c.finca === '__libre__';
+  ov.innerHTML = `<div class="modal-box">
+    <div class="modal-title">✎ Editar compra</div>
+    <div class="field-label">Descripción</div>
+    <input id="ec-desc" value="${escapeHtml(c.desc)}">
+    <div class="field-label">Ubicación</div>
+    <select id="ec-finca">
+      <option value="">— Sin finca —</option>
+      ${FINCAS.map(f=>`<option value="${escapeHtml(f)}" ${!isLibre && c.finca===f?'selected':''}>${escapeHtml(f)}</option>`).join('')}
+      <option value="__libre__" ${isLibre?'selected':''}>✏️ Texto libre...</option>
+    </select>
+    <div id="ec-libre-row" style="display:${isLibre?'block':'none'};margin-top:6px">
+      <input id="ec-libre-text" value="${escapeHtml(c.libreText||'')}" placeholder="Ubicación...">
+    </div>
+    <div class="field-label" style="margin-top:10px">Foto / Factura</div>
+    <div id="ec-photo-area">${photoHtml}</div>
+    <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+      <label class="btn-foto-lbl">
+        <input type="file" accept="image/*" class="file-input-hidden" id="ec-foto-input" onchange="handleEditCompraPhoto(event)">
+        📷 ${c.img?'Cambiar':'Añadir'} foto
+      </label>
+      ${c.img?'<button class="btn-cancel" onclick="removeEditCompraPhoto()">Quitar foto</button>':''}
+    </div>
+    <div class="modal-btns">
+      <button class="btn-danger" onclick="deleteCompra()">🗑 Borrar</button>
+      <div class="btn-cancel" onclick="closeEditCompraModal()">Cancelar</div>
+      <div class="btn-ok" onclick="saveEditCompra()">Guardar</div>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.onclick = e => { if (e.target === ov) closeEditCompraModal(); };
+  // listener select
+  setTimeout(() => {
+    const sel = document.getElementById('ec-finca');
+    if (sel) sel.addEventListener('change', () => {
+      const r = document.getElementById('ec-libre-row');
+      if (r) r.style.display = sel.value === '__libre__' ? 'block' : 'none';
+    });
+  }, 20);
+}
+function handleEditCompraPhoto(e) {
+  const file = e.target.files[0]; if (!file) return;
+  if (file.size > 3000000) { showToast('Foto demasiado grande (máx 3 MB)'); return; }
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const maxDim = 1200; let w = img.width, h = img.height;
+      if (w > maxDim || h > maxDim) { if (w > h) { h = h*maxDim/w; w=maxDim; } else { w=w*maxDim/h; h=maxDim; } }
+      canvas.width=w; canvas.height=h;
+      canvas.getContext('2d').drawImage(img,0,0,w,h);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      window._editCompraPhoto = dataUrl;
+      const area = document.getElementById('ec-photo-area');
+      if (area) area.innerHTML = `<img class="modal-photo-preview" src="${dataUrl}" onclick="openPhotoViewer('${dataUrl}')">`;
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+function removeEditCompraPhoto() {
+  window._editCompraPhoto = null;
+  const area = document.getElementById('ec-photo-area'); if (area) area.innerHTML = '';
+}
+function closeEditCompraModal() { const m = document.getElementById('edit-compra-modal'); if (m) m.remove(); editCompraId = null; }
+function saveEditCompra() {
+  const c = compras.find(x => x.id === editCompraId); if (!c) return;
+  const desc = (document.getElementById('ec-desc').value || '').trim();
+  if (!desc) { showToast('La descripción no puede estar vacía'); return; }
+  const fincaVal = document.getElementById('ec-finca').value;
+  c.desc = desc;
+  c.img = window._editCompraPhoto || null;
+  if (fincaVal === '__libre__') {
+    c.finca = '__libre__';
+    c.libreText = (document.getElementById('ec-libre-text').value || '').trim();
+  } else {
+    c.finca = fincaVal || '__libre__';
+    c.libreText = '';
+  }
+  saveState();
+  closeEditCompraModal();
+  buildCompras();
+  showToast('✅ Actualizada');
+}
+function deleteCompra() {
+  if (!confirm('¿Borrar esta compra?')) return;
+  compras = compras.filter(x => x.id !== editCompraId);
+  saveState();
+  closeEditCompraModal();
+  buildCompras();
+  showToast('🗑 Borrada');
+}
+
+function bulkComprasDone() {
+  selectedCompras.forEach(id => { const c = compras.find(x => x.id === id); if (c) c.done = true; });
+  selectedCompras.clear(); comprasSelectMode = false;
+  saveState(); buildCompras(); showToast('✅ Hechas');
+}
+function bulkComprasDelete() {
+  if (!confirm('¿Borrar las compras seleccionadas?')) return;
+  compras = compras.filter(x => !selectedCompras.has(x.id));
+  selectedCompras.clear(); comprasSelectMode = false;
+  saveState(); buildCompras(); showToast('🗑 Eliminadas');
+}
+
+// ===== EXPORTAR FACTURAS PDF =====
+async function exportarFacturasPDF() {
+  const ids = [...selectedCompras];
+  const conFoto = ids.map(id => compras.find(x => x.id === id)).filter(c => c && c.img);
+  if (!conFoto.length) { showToast('Las compras seleccionadas no tienen foto'); return; }
+
+  // Generar HTML con una imagen por página A4 y abrirlo para imprimir
+  const imgsHtml = conFoto.map(c => {
+    const loc = c.finca === '__libre__' ? (c.libreText || '') : c.finca;
+    return `<div class="factura-page"><img src="${c.img}" alt="${escapeHtml(c.desc)}"></div>`;
+  }).join('');
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Facturas Natura Viva</title><style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { background:#fff; }
+    .factura-page {
+      width: 210mm;
+      height: 297mm;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      page-break-after: always;
+      overflow: hidden;
+    }
+    .factura-page img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+    @media print {
+      .factura-page { page-break-after: always; }
+    }
+  </style></head><body>${imgsHtml}<script>window.onload=function(){window.print();}<\/script></body></html>`;
+
+  const blob = new Blob([html], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, '_blank');
+  if (!win) {
+    // Si el popup está bloqueado, descargar como HTML
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `facturas_${new Date().toISOString().slice(0,10)}.html`;
+    a.click();
+    showToast('📄 Descargado — ábrelo y usa Imprimir → Guardar como PDF');
+  } else {
+    showToast(`✅ ${conFoto.length} factura${conFoto.length>1?'s':''} — usa Imprimir para guardar PDF`);
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
